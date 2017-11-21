@@ -90,7 +90,7 @@ betagam_accept = function(X,
                          0, Vbeta, log = TRUE)
   s1 = sum(gam1==1)
   s2 = sum(gam2==1)
-  marcor = abs(colMeans(X*Y))
+  marcor = abs(colMeans(X*Y, na.rm=TRUE))
   if(change==1){
     temp = marcor[changeind] / sum(marcor[gam1==0])
     proposal_ratio = -log(temp)-log(s2)-proposal_ratio

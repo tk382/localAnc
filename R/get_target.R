@@ -9,7 +9,6 @@ get_target = function(X, Y, sigmabeta, Sigma, gam, beta){
                           logd=TRUE)
     }
   }
-
   ind = which(gam==1);
   s = length(ind);
   B = 0
