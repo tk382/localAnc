@@ -9,12 +9,6 @@ createData = function(n, Phi, nu, T, sigmabeta, missingprop){
   for (i in 1:length(ind)){
     beta[ind[i]] = rnorm(1, 0, sigmabeta*Sigma[ind[i], ind[i]])
   }
-  # if(length(ind)>1){
-  #   beta[gamma==1] = mvrnorm(1, rep(0, sum(gamma==1)), sigmabeta * Sigma[ind,ind])
-  # }else if(length(ind)==1){
-  #   beta[gamma==1] = rnorm(1, 0, sigmabeta*Sigma[ind,ind])
-  # }else{
-  # }
   Xbeta = X %*% t(beta)
   epsilon = mvrnorm(n, rep(0,T), Sigma)
   Y = Xbeta + epsilon
