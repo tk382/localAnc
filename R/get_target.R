@@ -14,7 +14,7 @@ get_target = function(X, Y, sigmabeta, Sigma, gam, beta){
   B = 0
   if(s>0){
     B = sum(dnorm(beta[ind], rep(0,s),
-                            sigmabeta1*(diag(Sigma)[ind]),
+                            sqrt(sigmabeta*(diag(Sigma)[ind])),
                             log=TRUE))
   }
   G = log(beta(s+1, T-s+1))

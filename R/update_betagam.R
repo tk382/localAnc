@@ -14,14 +14,14 @@ update_betagam = function(X,
   outbeta[1,] = beta1
   tar = rep(0,bgiter)
   for (i in 2:bgiter){
-    temp = update_gamma(X, Y, outgamma[i-1,],1)
+    temp = update_gamma(X, Y, outgamma[i-1,])
     gam1 = outgamma[i-1, ];   beta1 = outbeta[i-1, ]
-    gam2 = temp$newgamma;     beta2 = beta1*gam2
+    gam2 = as.numeric(temp$gam);     beta2 = beta1*gam2
     ind = which(gam2==1)
-    beta2[ind] = beta1[ind] + rnorm(length(ind), 0, Vbeta)
-    changeind = temp$changeind
+    beta2[ind] = beta1[ind] + rnorm(length(ind), 0, sqrt(Vbeta))
+    changeind = temp$changeind+1
     change = gam2[changeind]
-    A = (betagam_accept(X, Y, sigmabeta, Sigma, gam1, beta1, gam2, beta2, changeind, change))
+    A = betagam_accept(X, Y, sigmabeta, Sigma, Vbeta, gam1, beta1, gam2, beta2, changeind-1, change)
     check = runif(1,0,1)
     if(exp(A[1])>check){
       #print('update')
@@ -32,20 +32,20 @@ update_betagam = function(X,
       tar[i] = A[3]
       outgamma[i,] = gam1; outbeta[i,] = beta1;
     }
+    i=i+1
   }
   return(list(gam = outgamma, beta = outbeta, tar = tar))
 }
 
 update_gamma = function(X,
                         Y,
-                        gamma,
-                        mag)
+                        gamma)
   {
   newgamma = gamma
   T = length(gamma)
   p1 = p2 = 0.5;
   ind0 = which(gamma==0)
-  ind1 = which(gamma!=0)
+  ind1 = which(gamma==1)
   s = length(ind1)
   if(s==0){
     ##nothing to remove
@@ -77,6 +77,7 @@ betagam_accept = function(X,
                            Y,
                            sigmabeta1,
                            inputSigma,
+                           Vbeta,
                            gam1,
                            beta1,
                            gam2,
@@ -87,7 +88,7 @@ betagam_accept = function(X,
   newtarget = sum(get_target(X, Y, sigmabeta1, inputSigma, gam2, beta2))
   oldtarget = sum(get_target(X, Y, sigmabeta1, inputSigma, gam1, beta1))
   proposal_ratio = dnorm(beta1[changeind]-beta2[changeind],
-                         0, Vbeta, log = TRUE)
+                         0, sqrt(Vbeta), log = TRUE)
   s1 = sum(gam1==1)
   s2 = sum(gam2==1)
   marcor = abs(colMeans(X*Y, na.rm=TRUE))

@@ -7,7 +7,7 @@ createData = function(n, Phi, nu, T, sigmabeta, missingprop){
   beta = rep(0,T)
   ind = which(gamma==1)
   for (i in 1:length(ind)){
-    beta[ind[i]] = rnorm(1, 0, sigmabeta*Sigma[ind[i], ind[i]])
+    beta[ind[i]] = rnorm(1, 0, sqrt(sigmabeta*Sigma[ind[i], ind[i]]))
   }
   Xbeta = X %*% t(beta)
   epsilon = mvrnorm(n, rep(0,T), Sigma)
