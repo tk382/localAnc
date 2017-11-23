@@ -16,18 +16,16 @@ update_betagam = function(X,
   for (i in 2:bgiter){
     temp = update_gamma(X, Y, outgamma[i-1,])
     gam1 = outgamma[i-1, ];   beta1 = outbeta[i-1, ]
-    gam2 = as.numeric(temp$gam);     beta2 = beta1*gam2
+    gam2 = as.numeric(temp$newgamma);     beta2 = beta1*gam2
     ind = which(gam2==1)
     beta2[ind] = beta1[ind] + rnorm(length(ind), 0, sqrt(Vbeta))
-    changeind = temp$changeind+1
+    changeind = temp$changeind
     change = gam2[changeind]
-    A = betagam_accept(X, Y, sigmabeta, Sigma, Vbeta, gam1, beta1, gam2, beta2, changeind-1, change)
+    A = betagam_accept(X, Y, sigmabeta, Sigma, Vbeta, gam1, beta1, gam2, beta2, changeind, change)
     check = runif(1,0,1)
     if(exp(A[1])>check){
-      #print('update')
       tar[i] = A[2]
       outgamma[i,] = gam2; outbeta[i,] = beta2;
-      #print(outgamma[i,])
     }else{
       tar[i] = A[3]
       outgamma[i,] = gam1; outbeta[i,] = beta1;

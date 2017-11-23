@@ -142,7 +142,7 @@ arma::vec get_target_c(arma::vec X, arma::mat Y, double sigmabeta,
       B = B + R::dnorm(beta(newind), 0, sqrt(sigmabeta*ds(newind)), true);
     }
   }
-  G = log(gamma(s+1)*gamma(T-s+1)/gamma(T+2));
+  G = log(std::tgamma(s+1)*std::tgamma(T-s+1)/std::tgamma(T+2));
   arma::vec out = arma::zeros<arma::vec>(3);
   out(0) = L;
   out(1) = B;
@@ -382,4 +382,41 @@ arma::mat update_Sigma_c(int n, int nu, arma::vec X, arma::vec beta, arma::mat P
   arma::cube res = rinvwish_c(1, n+nu, emp*n + Phi*nu);
   return res.slice(0);
 }
+/*
+// [[Rcpp::depends("RcppArmadillo")]]
+// [[Rcpp::export]]
+Rcpp::List doMCMC(int n,
+                  int T,
+                  arma::vec initialbeta,
+                  arma::vec initialgamma,
+                  arma::mat initialSigma,
+                  double initialsigmabeta,
+                  double Vbeta,
+                  int niter,
+                  int bgiter,
+                  int hiter){
+  //empty arrays to save values
+  arma::mat outbeta = arma::zeros<arma::mat>(T, niter);
+  arma::mat outgam = arma::zeros<arma::mat>(T,niter);
+  arma::cube outSigma = arma::zeros<arma::cube>(T,T,niter);
+  arma::vec outsb = arma::zeros<arma::vec>(niter);
+  arma::vec outh = arma::zeros<arma::vec>(niter);
+
+
+                  }*/
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
