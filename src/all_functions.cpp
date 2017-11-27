@@ -382,6 +382,8 @@ arma::mat update_Sigma_c(int n, int nu, arma::vec X, arma::vec beta, arma::mat P
   arma::cube res = rinvwish_c(1, n+nu, emp*n + Phi*nu);
   return res.slice(0);
 }
+
+
 /*
 // [[Rcpp::depends("RcppArmadillo")]]
 // [[Rcpp::export]]
@@ -406,6 +408,207 @@ Rcpp::List doMCMC(int n,
                   }*/
 
 
+
+// [[Rcpp::depends("RcppArmadillo")]]
+// [[Rcpp::export]]
+Rcpp::List update_gamma_sw_c(arma::vec X,
+                             arma::mat Y,
+                             arma::vec gam,
+                             arma::rowvec marcor){
+  int changeind = 0;
+  arma::rowvec marcor2 = -marcor + max(marcor) + 0.01;
+  arma::vec newgam = gam;
+  int T = gam.size();
+  arma::vec prob = arma::zeros<arma::vec>(2);
+  prob(0) = 0.5; prob(1) = 0.5;
+  arma::uvec ind0 = find(gam==0);
+  arma::uvec ind1 = find(gam==1);
+  int s = ind1.size();
+  NumericVector prob2 = wrap(prob);
+  int cas = sample_index(2, prob2);
+  if(s==0){
+    cas = 1;
+  }else if(s==T){
+    cas = 2;
+  }
+  if (cas==1){
+    int add = 1;
+    if(s<(T-1)){
+      arma::vec mc = marcor(ind0);
+      NumericVector mc2 = wrap(mc);
+      add = sample_index(ind0.size(), mc2);
+    }
+    newgam(ind0(add-1)) = 1;
+    changeind = ind0(add-1);
+  }
+  if(cas==2){
+    int remove=1;
+    if(s > 1){
+      arma::vec mc = marcor2(ind1);
+      NumericVector mc2 = wrap(mc);
+      remove = sample_index(ind1.size(), mc2);
+    }
+    newgam(ind1(remove-1)) = 0;
+    changeind = ind1(remove-1);
+  }
+  return(
+    Rcpp::List::create(
+      Rcpp::Named("gam") = newgam,
+      Rcpp::Named("changeind") = changeind)
+  );
+}
+
+// [[Rcpp::depends("RcppArmadillo")]]
+// [[Rcpp::export]]
+arma::vec betagam_accept_sw_c(arma::vec X,
+                           arma::mat Y,
+                           double sigmabeta1,
+                           arma::mat inputSigma,
+                           double Vbeta,
+                           arma::vec gam1,
+                           arma::vec beta1,
+                           arma::vec gam2,
+                           arma::vec beta2,
+                           int changeind,
+                           int change){
+  double newtarget = sum(get_target_c(X,Y,sigmabeta1,inputSigma,gam2,beta2));
+  double oldtarget = sum(get_target_c(X,Y,sigmabeta1,inputSigma,gam1,beta1));
+  double proposal_ratio = R::dnorm(beta1(changeind)-beta2(changeind),0,sqrt(Vbeta),true);
+  int T = gam1.size();
+  //int s1 = sum(gam1==1);
+  //int s2 = sum(gam2==1);
+  arma::rowvec marcor = arma::zeros<arma::rowvec>(T);
+  for (int t=0; t<T; ++t){
+    arma::vec temp = Y.col(t);
+    arma::uvec tempind = find_finite(temp);
+    marcor(t) = abs(sum(temp(tempind)%X(tempind)))/tempind.size();
+  }
+  arma::rowvec marcor2 = -marcor + max(marcor) + 0.01;
+  if(change==1){
+    arma::uvec ind1 = find(gam1==0);
+    arma::uvec ind2 = find(gam2==1);
+    double tempadd = marcor(changeind)/sum(marcor(ind1));
+    double tempremove = marcor2(changeind)/sum(marcor2(ind2));
+    proposal_ratio = -log(tempadd)-log(tempremove)-proposal_ratio;
+  }else{
+    arma::uvec ind1 = find(gam1==1);
+    arma::uvec ind2 = find(gam2==0);
+    double tempadd = marcor(changeind)/sum(marcor(ind2));
+    double tempremove = marcor2(changeind) / sum(marcor2(ind1));
+    proposal_ratio = log(tempadd)+log(tempremove)+proposal_ratio;
+  }
+  double final_ratio = newtarget-oldtarget+proposal_ratio;
+  arma::vec out = arma::zeros<arma::vec>(4);
+  out(0) = final_ratio;
+  out(1) = newtarget;
+  out(2) = oldtarget;
+  out(3) = proposal_ratio;
+  return(out);
+}
+
+// [[Rcpp::depends("RcppArmadillo")]]
+// [[Rcpp::export]]
+Rcpp::List update_betagam_sw_c(arma::vec X,
+                            arma::mat Y,
+                            arma::vec gam1,
+                            arma::vec beta1,
+                            arma::mat Sigma,
+                            arma::rowvec marcor,
+                            double sigmabeta,
+                            double Vbeta,
+                            int bgiter,
+                            int smallworlditer){
+  int T = gam1.size();
+  arma::mat outgamma = arma::zeros<arma::mat>(T,bgiter);
+  arma::mat outbeta = arma::zeros<arma::mat>(T,bgiter);
+  outgamma.col(0) = gam1;
+  outbeta.col(0) = beta1;
+  arma::vec tar = arma::zeros<arma::vec>(bgiter);
+  for (int i=1; i<bgiter; ++i){
+    Rcpp::List temp = update_gamma_sw_c(X,Y,outgamma.col(i-1), marcor);
+    arma::vec gam1 = outgamma.col(i-1);
+    arma::vec beta1 = outbeta.col(i-1);
+    //small world proposal
+    if(i%10==0){
+      double proposal_ratio = 0;
+      arma::vec betatemp1 = beta1;
+      arma::vec gamtemp1 = gam1;
+      arma::vec betatemp2 = betatemp1;
+      arma::vec gamtemp2 = gamtemp1;
+      for (int j=0; j < smallworlditer; ++j){
+        Rcpp::List temp = update_gamma_sw_c(X,Y,gamtemp1, marcor);
+        arma::vec gamtemp2 = as<arma::vec>(temp["gam"]);
+        arma::vec betatemp2 = betatemp1 % gamtemp2;
+        arma::uvec ind = find(gamtemp2==1);
+        betatemp2(ind) = betatemp1(ind) + as<arma::vec>(rnorm(ind.size(), 0, sqrt(Vbeta)));
+        int changeind = temp["changeind"];
+        int change = gamtemp2(changeind);
+        double proposaliter = R::dnorm(betatemp1(changeind)-betatemp2(changeind),
+                             0,sqrt(Vbeta), true);
+        //int s1 = sum(gamtemp1);
+        //int s2 = sum(gamtemp2);
+        arma::rowvec marcor2 = -marcor + max(marcor) + 0.01;
+        if(change==1){
+          arma::uvec ind1 = find(gamtemp1==0);
+          arma::uvec ind2 = find(gamtemp2==1);
+          double tempadd = marcor(changeind)/sum(marcor(ind1));
+          double tempremove = marcor2(changeind)/sum(marcor2(ind2));
+          proposaliter = -log(tempadd)-log(tempremove)-proposaliter;
+        }else{
+          arma::uvec ind1 = find(gamtemp1==1);
+          arma::uvec ind2 = find(gamtemp2==0);
+          double tempadd = marcor(changeind)/sum(marcor(ind2));
+          double tempremove = marcor2(changeind) / sum(marcor2(ind1));
+          proposaliter = log(tempadd)+log(tempremove)+proposaliter;
+        }
+        proposal_ratio = proposal_ratio + proposaliter;
+        gamtemp1 = gamtemp2; betatemp1 = betatemp2;
+      }
+      arma::vec gam2 = gamtemp2;
+      arma::vec beta2 = betatemp2;
+      double newtarget = sum(get_target_c(X,Y,sigmabeta,Sigma,gam2,beta2));
+      double oldtarget = sum(get_target_c(X,Y,sigmabeta,Sigma,gam1,beta1));
+      double A = newtarget-oldtarget + proposal_ratio;
+      arma::vec check2 = runif(1,0,1); double check = check2(0);
+      if(exp(A) > check){
+        tar(i) = newtarget;
+        outgamma.col(i)= gam2;
+        outbeta.col(i) = beta2;
+      }else{
+        tar(i) = oldtarget;
+        outgamma.col(i) = gam1;
+        outbeta.col(i) = beta1;
+      }
+    }else{
+      Rcpp::List temp = update_gamma_sw_c(X,Y,gam1, marcor);
+      arma::vec gam2 = as<arma::vec>(temp["gam"]);
+      arma::vec beta2 = beta1 % gam2;
+      arma::uvec ind = find(gam2==1);
+      beta2(ind) = beta1(ind) + as<arma::vec>(rnorm(ind.size(), 0, sqrt(Vbeta)));
+      int changeind = temp["changeind"];
+      int change = gam2(changeind);
+      arma::vec A = betagam_accept_c(X,Y,sigmabeta,
+                                     Sigma,Vbeta,
+                                     gam1,beta1,
+                                     gam2,beta2,
+                                     changeind,change);
+      NumericVector check2 = runif(1);
+      double check = check2(0);
+      if(exp(A(0))>check){
+        tar(i) = A(1);
+        outgamma.col(i) = gam2; outbeta.col(i) = beta2;
+      }else{
+        tar(i) = A(2);
+        outgamma.col(i) = gam1; outbeta.col(i) = beta1;
+      }
+    }
+  }
+  return Rcpp::List::create(
+    Rcpp::Named("gam") = outgamma.t(),
+    Rcpp::Named("beta") = outbeta.t(),
+    Rcpp::Named("tar") = tar
+  );
+}
 
 
 

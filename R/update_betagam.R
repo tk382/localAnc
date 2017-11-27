@@ -14,8 +14,8 @@ update_betagam = function(X,
   outbeta[1,] = beta1
   tar = rep(0,bgiter)
   for (i in 2:bgiter){
+    gam1 = outgamma[i-1, ]; beta1 = outbeta[i-1,]
     temp = update_gamma(X, Y, outgamma[i-1,])
-    gam1 = outgamma[i-1, ];   beta1 = outbeta[i-1, ]
     gam2 = as.numeric(temp$newgamma);     beta2 = beta1*gam2
     ind = which(gam2==1)
     beta2[ind] = beta1[ind] + rnorm(length(ind), 0, sqrt(Vbeta))
@@ -30,7 +30,6 @@ update_betagam = function(X,
       tar[i] = A[3]
       outgamma[i,] = gam1; outbeta[i,] = beta1;
     }
-    i=i+1
   }
   return(list(gam = outgamma, beta = outbeta, tar = tar))
 }
@@ -91,12 +90,12 @@ betagam_accept = function(X,
   s2 = sum(gam2==1)
   marcor = abs(colMeans(X*Y, na.rm=TRUE))
   if(change==1){
-    temp = marcor[changeind] / sum(marcor[gam1==0])
-    proposal_ratio = -log(temp)-log(s2)-proposal_ratio
+    tempadd = marcor[changeind] / sum(marcor[gam1==0])
+    proposal_ratio = -log(tempadd)-log(s2)-proposal_ratio
   }
   if(change==0){
-    temp = marcor[changeind] / sum(marcor[gam2==0])
-    proposal_ratio = log(temp) + log(s1) + proposal_ratio
+    tempadd = marcor[changeind] / sum(marcor[gam2==0])
+    proposal_ratio = log(tempadd) + log(s1) + proposal_ratio
   }
   final_ratio = newtarget - oldtarget + proposal_ratio
   return(c(final_ratio, newtarget, oldtarget, proposal_ratio))
