@@ -18,6 +18,7 @@ update_betagam_smallworld = function(X,
     gam1 = outgamma[i-1, ]; beta1 = outbeta[i-1,]
     #small world proposal
     if(i%%10==0){ #small world proposal
+      print(i)
       proposal_ratio = 0
       betatemp1  = beta1; gamtemp1 = gam1;
       #combine 50 steps
@@ -48,16 +49,21 @@ update_betagam_smallworld = function(X,
       gam2 = gamtemp2; beta2 = betatemp2;
       newtarget = sum(get_target(X, Y, sigmabeta, Sigma, gam2, beta2))
       oldtarget = sum(get_target(X, Y, sigmabeta, Sigma, gam1, beta1))
-      A = newtarget - oldtarget + proposal_ratio
+      A = c(newtarget - oldtarget + proposal_ratio, newtarget,oldtarget)
+      print(newtarget)
+      print(oldtarget)
+      print(proposal_ratio)
       check = runif(1)
-      if(exp(A)>check){
+      if(exp(A[1])>check){
+        print('accepted!')
         tar[i] = A[2]
         outgamma[i,] = gam2; outbeta[i,] = beta2;
       }else{
         tar[i] = A[3]
         outgamma[i,] = gam1; outbeta[i,] = beta1;
       }
-    }else{
+    }
+    if(i%%10!=0){
       temp = update_gamma_smallworld(X, Y, outgamma[i-1,])
       gam2 = as.numeric(temp$newgamma);     beta2 = beta1*gam2
       ind = which(gam2==1)
@@ -67,6 +73,7 @@ update_betagam_smallworld = function(X,
       A = betagam_accept_smallworld(X, Y, sigmabeta, Sigma, Vbeta, gam1, beta1, gam2, beta2, changeind, change)
       check = runif(1,0,1)
       if(exp(A[1])>check){
+        print('accepted!')
         tar[i] = A[2]
         outgamma[i,] = gam2; outbeta[i,] = beta2;
       }else{
@@ -74,6 +81,9 @@ update_betagam_smallworld = function(X,
         outgamma[i,] = gam1; outbeta[i,] = beta1;
       }
     }
+    print(gam1)
+    print(gam2); print(A);
+    #i = i+1;
   }
   return(list(gam = outgamma, beta = outbeta, tar = tar))
 }
