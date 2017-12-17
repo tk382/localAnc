@@ -1,4 +1,4 @@
-update_betagam_smallworld = function(X,
+update_betagam_sw = function(X,
                           Y,
                           gam1,
                           beta1,
@@ -17,8 +17,7 @@ update_betagam_smallworld = function(X,
   for (i in 2:bgiter){
     gam1 = outgamma[i-1, ]; beta1 = outbeta[i-1,]
     #small world proposal
-    if(i%%10==0){ #small world proposal
-      print(i)
+    if(i%%10000==0){ #small world proposal
       proposal_ratio = 0
       betatemp1  = beta1; gamtemp1 = gam1;
       #combine 50 steps
@@ -37,7 +36,7 @@ update_betagam_smallworld = function(X,
         marcor = abs(colMeans(X*Y, na.rm=TRUE))
         if(change==1){
           ma = marcor[changeind] / sum(marcor[gamtemp1==0])
-          proposaliter = -log(ma)-log(s2)-proposaliter
+          proposaliter = -log(ma)-log(s2) -proposaliter
         }
         if(change==0){
           ma = marcor[changeind] / sum(marcor[gamtemp2==0])
@@ -46,16 +45,25 @@ update_betagam_smallworld = function(X,
         proposal_ratio = proposal_ratio + proposaliter
         gamtemp1 = gamtemp2; betatemp1 = betatemp2
       }
-      gam2 = gamtemp2; beta2 = betatemp2;
+      gam2 = gamtemp2;
+      beta2 = betatemp2
+      #beta2 = beta1 + rnorm(T, 0, Vbeta);
+      # beta2 = beta2 * gam2
+      # removedind = which(gam2==0 & gam1==1)
+      # if(length(removedind) > 0){
+      #   betapros = sum(dnorm(beta1[removedind]-beta2[removedind],0, sqrt(Vbeta), log = TRUE))
+      #   proposal_ratio = proposal_ratio + betapros
+      # }
+      # addedind = which(gam2==1 & gam1==0)
+      # if(length(addedind) > 0){
+      #   betapros = sum(dnorm(beta1[addedind]-beta2[addedind],0, sqrt(Vbeta), log = TRUE))
+      #   proposal_ratio = proposal_ratio - betapros
+      # }
       newtarget = sum(get_target(X, Y, sigmabeta, Sigma, gam2, beta2))
       oldtarget = sum(get_target(X, Y, sigmabeta, Sigma, gam1, beta1))
-      A = c(newtarget - oldtarget + proposal_ratio, newtarget,oldtarget)
-      print(newtarget)
-      print(oldtarget)
-      print(proposal_ratio)
+      A = c(newtarget-oldtarget, newtarget, oldtarget)
       check = runif(1)
       if(exp(A[1])>check){
-        print('accepted!')
         tar[i] = A[2]
         outgamma[i,] = gam2; outbeta[i,] = beta2;
       }else{
@@ -63,7 +71,7 @@ update_betagam_smallworld = function(X,
         outgamma[i,] = gam1; outbeta[i,] = beta1;
       }
     }
-    if(i%%10!=0){
+    if(i%%1==0){
       temp = update_gamma_smallworld(X, Y, outgamma[i-1,])
       gam2 = as.numeric(temp$newgamma);     beta2 = beta1*gam2
       ind = which(gam2==1)
@@ -73,7 +81,6 @@ update_betagam_smallworld = function(X,
       A = betagam_accept_smallworld(X, Y, sigmabeta, Sigma, Vbeta, gam1, beta1, gam2, beta2, changeind, change)
       check = runif(1,0,1)
       if(exp(A[1])>check){
-        print('accepted!')
         tar[i] = A[2]
         outgamma[i,] = gam2; outbeta[i,] = beta2;
       }else{
@@ -81,9 +88,7 @@ update_betagam_smallworld = function(X,
         outgamma[i,] = gam1; outbeta[i,] = beta1;
       }
     }
-    print(gam1)
-    print(gam2); print(A);
-    #i = i+1;
+    i = i+1;
   }
   return(list(gam = outgamma, beta = outbeta, tar = tar))
 }
