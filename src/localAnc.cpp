@@ -672,7 +672,7 @@ Rcpp::List run2chains_c(arma::vec X,
              Rcpp::List initial_chain2,
              arma::mat Phi,
              int niter = 1000,
-             int bgiter = 200,
+             int bgiter = 500,
              int hiter = 50,
              int switer = 50,
              int burnin = 5){
@@ -689,7 +689,7 @@ Rcpp::List run2chains_c(arma::vec X,
     marcor(t) = sum(ycol(non_null)%X(non_null))/non_null.size();
   }
   //initialize Vbeta
-  double Vbeta = sum(marcor%marcor) * 0.005;
+  double Vbeta = sum(marcor%marcor) * 0.01;
 
   arma::mat outbeta1 = arma::zeros<arma::mat>(T, niter);
   arma::mat outgam1 = arma::zeros<arma::mat>(T,niter);
