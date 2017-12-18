@@ -473,13 +473,13 @@ arma::vec betagam_accept_sw_c(arma::vec X,
     arma::uvec ind2 = find(gam2==1);
     double tempadd = marcor(changeind)/sum(marcor(ind1));
     double tempremove = marcor2(changeind)/sum(marcor2(ind2));
-    proposal_ratio = -log(tempadd)-log(tempremove)-proposal_ratio;
+    proposal_ratio = -log(tempadd)+log(tempremove)-proposal_ratio;
   }else{
     arma::uvec ind1 = find(gam1==1);
     arma::uvec ind2 = find(gam2==0);
     double tempadd = marcor(changeind)/sum(marcor(ind2));
     double tempremove = marcor2(changeind) / sum(marcor2(ind1));
-    proposal_ratio = log(tempadd)+log(tempremove)+proposal_ratio;
+    proposal_ratio = log(tempadd)-log(tempremove)+proposal_ratio;
   }
   double final_ratio = newtarget-oldtarget+proposal_ratio;
   arma::vec out = arma::zeros<arma::vec>(4);

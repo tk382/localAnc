@@ -47,18 +47,6 @@ update_betagam_sw = function(X,
       }
       gam2 = gamtemp2;
       beta2 = betatemp2
-      #beta2 = beta1 + rnorm(T, 0, Vbeta);
-      # beta2 = beta2 * gam2
-      # removedind = which(gam2==0 & gam1==1)
-      # if(length(removedind) > 0){
-      #   betapros = sum(dnorm(beta1[removedind]-beta2[removedind],0, sqrt(Vbeta), log = TRUE))
-      #   proposal_ratio = proposal_ratio + betapros
-      # }
-      # addedind = which(gam2==1 & gam1==0)
-      # if(length(addedind) > 0){
-      #   betapros = sum(dnorm(beta1[addedind]-beta2[addedind],0, sqrt(Vbeta), log = TRUE))
-      #   proposal_ratio = proposal_ratio - betapros
-      # }
       newtarget = sum(get_target(X, Y, sigmabeta, Sigma, gam2, beta2))
       oldtarget = sum(get_target(X, Y, sigmabeta, Sigma, gam1, beta1))
       A = c(newtarget-oldtarget, newtarget, oldtarget)
@@ -158,11 +146,11 @@ betagam_accept_smallworld = function(X,
   if(change==1){
     tempadd = marcor[changeind] / sum(marcor[gam1==0])
     tempremove = marcor2[changeind] / sum(marcor2[gam2==1])
-    proposal_ratio = -log(tempadd)-log(tempremove)-proposal_ratio
+    proposal_ratio = -log(tempadd)+log(tempremove)-proposal_ratio
   }else{
     tempadd = marcor[changeind] / sum(marcor[gam2==0])
     tempremove = marcor2[changeind] / sum(marcor2[gam1==1])
-    proposal_ratio = log(tempadd) + log(tempremove) + proposal_ratio
+    proposal_ratio = log(tempadd) - log(tempremove) + proposal_ratio
   }
   final_ratio = newtarget - oldtarget + proposal_ratio
   return(c(final_ratio, newtarget, oldtarget, proposal_ratio))
