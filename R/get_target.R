@@ -1,12 +1,14 @@
-get_target = function(X, Y, sigmabeta, Sigma, gam, beta){
+get_target = function(X, Y, sigmabeta, Sigma, gam, beta, T){
   L=0
   for (i in 1:n){
-    ind = !is.na(Y[i,])
+    ind = which(!is.na(Y[i,]))
     if(sum(ind)>0){
-      L = L + dmvnrm_arma(Y[i,ind],
-                          X[i]*beta[ind],
-                          matrix(Sigma[ind,ind], nrow=sum(ind)),
-                          logd=TRUE)
+      thing.to.add = dmvnrm_arma(Y[i,ind],
+                                 X[i]*beta[ind],
+                                 matrix(Sigma[ind,ind], nrow=length(ind)),
+                                 T,
+                                 logd=TRUE)/length(ind)*T
+      L = L + thing.to.add
     }
   }
   ind = which(gam==1);

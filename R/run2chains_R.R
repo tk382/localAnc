@@ -1,8 +1,17 @@
-run2chains_R = function(X,Y,n,T,Phi,nu,marcor,Vbeta,
-                        niter,bgiter,hiter,switer,
-                        initial_chain1, initial_chain2,
-                        burnin){
-
+run2chains_R = function(X,Y,
+                        initial_chain1,
+                        initial_chain2,
+                        Phi,
+                        marcor,
+                        niter=1000,
+                        bgiter=500,
+                        hiter=50,
+                        switer=50,
+                        burnin=5){
+  T = ncol(Y)
+  n = nrow(Y)
+  nu = T+4
+  Vbeta = mean(marcor^2) * 0.005
   outbeta1  = outbeta2  = matrix(0,niter,T)
   outgam1   = outgam2   = matrix(0,niter,T)
   outSigma1 = outSigma2 = array(0,dim=c(T,T,niter))
@@ -22,17 +31,20 @@ run2chains_R = function(X,Y,n,T,Phi,nu,marcor,Vbeta,
 
   for (i in 2:niter){
     ##chain 1 update
-    bg = update_betagam_sw(X,
+    bg = update_betagam(X,
                            Y,
                            outgam1[i-1,],
                            outbeta1[i-1,],
                            outSigma1[,,i-1],
+                        abs(marcor),
                            outsb1[i-1],
                            Vbeta,
                            bgiter,
-                           switer)
-    outgam1[i,] = bg$gam[bgiter,]
-    outbeta1[i,] = bg$beta[bgiter,]
+                        T)
+
+
+    outgam1[i,] = bg$gam
+    outbeta1[i,] = bg$beta
     outSigma1[,,i] = update_Sigma(n,nu,X,outbeta1[i,],Phi,Y)
     hsig = update_h(outh1[i-1],
                     hiter,
@@ -41,27 +53,28 @@ run2chains_R = function(X,Y,n,T,Phi,nu,marcor,Vbeta,
                     outSigma1[,,i],
                     X,
                     T)
-    outh1[i] = hsig$h[hiter]
-    outsb1[i] = hsig$sigbeta[hiter]
+    outh1[i] = hsig$h
+    outsb1[i] = hsig$sigbeta
     if(is.nan(outsb1[i])){outsb1[i]=1000}
-    tar1[i,] = get_target(X, Y,
+    tar1[i,] = get_target_new(X, Y,
                          outsb1[i],
                          outSigma1[,,i],
                          outgam1[i,],
-                         outbeta1[i,])
-
+                         outbeta1[i,],
+                         T)
     ##chain 2 update
-    bg = update_betagam_sw(X,
+    bg = update_betagam(X,
                            Y,
                            outgam2[i-1,],
                            outbeta2[i-1,],
                            outSigma2[,,i-1],
+                        abs(marcor),
                            outsb2[i-1],
                            Vbeta,
                            bgiter,
-                           switer)
-    outgam2[i,] = bg$gam[bgiter,]
-    outbeta2[i,] = bg$beta[bgiter,]
+                        T)
+    outgam2[i,] = bg$gam
+    outbeta2[i,] = bg$beta
     outSigma2[,,i] = update_Sigma(n,nu,X,outbeta2[i,],Phi,Y)
     hsig = update_h(outh2[i-1],
                     hiter,
@@ -78,8 +91,8 @@ run2chains_R = function(X,Y,n,T,Phi,nu,marcor,Vbeta,
                           outsb2[i],
                           outSigma2[,,i],
                           outgam2[i,],
-                          outbeta2[i,])
-
+                          outbeta2[i,],
+                          T)
 
     if(i > 2*burnin && i%%10==0){
       est1 = as.numeric(colMeans(outgam1[burnin:i, ])>0.5)
@@ -104,12 +117,13 @@ run2chains_R = function(X,Y,n,T,Phi,nu,marcor,Vbeta,
         }
       }
     }
+    print(i)
   }
   return(list(
       chain1 = list(gamma = outgam1, beta = outbeta1, Sigma = outSigma1,
-                    h = outh1, sigmabeta = outsb1),
+                    h = outh1, sigmabeta = outsb1, tar = tar1),
       chain2 = list(gamma = outgam2, beta = outbeta2, Sigma = outSigma2,
-                    h = outh2, sigmabeta = outsb2)
+                    h = outh2, sigmabeta = outsb2, tar = tar2)
     ))
 
 }

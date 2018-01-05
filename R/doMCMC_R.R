@@ -9,6 +9,7 @@ doMCMC_R = function(X,Y,n,T,Phi,nu,initialbeta,
   outsb = rep(0,niter)
   outh = rep(0,niter)
   tar = matrix(0,niter,3)
+
   outbeta[1,] = initialbeta
   outgam[1,] = initialgamma
   outSigma[,,1] = initialSigma
@@ -22,8 +23,12 @@ doMCMC_R = function(X,Y,n,T,Phi,nu,initialbeta,
     Sigma1 = outSigma[,,i-1]
     sigmabeta1 = outsb[i-1]
     h1 = outh[i-1]
-    bg = update_betagam_sw(X,Y,gam1,beta1,Sigma1,sigmabeta1,
-                           Vbeta,bgiter,switer)
+    bg = update_betagam(X,Y,
+                        gam1,beta1,
+                        Sigma1,abs(marcor),
+                        sigmabeta1,
+                        Vbeta,bgiter,
+                        switer)
     gam2 = bg$gam[bgiter,]
     beta2 = bg$beta[bgiter,]
     Sigma2 = update_Sigma(n,nu,X,beta2,Phi,Y)
