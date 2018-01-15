@@ -230,6 +230,8 @@ arma::vec get_target_c(const arma::vec X,
   }
   G = log(std::tgamma(s+1)*std::tgamma(T-s+1)/std::tgamma(T+2));
   arma::vec out = arma::zeros<arma::vec>(3);
+  //adjust for the missing values
+  L = L * 19536/12576;
   out(0) = L;
   out(1) = B;
   out(2) = G;
@@ -257,7 +259,15 @@ arma::vec get_target_c_new(const arma::vec X,
     if(naind.size()>0){
       arma::uvec rowind = arma::zeros<arma::uvec>(1);
       rowind(0) = i;
-      arma::mat tmp = mvrnormArma(1,arma::zeros<arma::vec>(naind1.size()),Sigma(naind1,naind1.t()));
+      //arma::mat tmp = mvrnormArma(1,arma::zeros<arma::vec>(naind1.size()),Sigma(naind1,naind1.t()));
+
+      arma::mat Sigma11 = Sigma(naind1, naind1);
+      arma::mat Sigma12 = Sigma(naind1, naind);
+      arma::mat Sigma21 = Sigma(naind, naind1);
+      arma::mat Sigma22 = Sigma(naind, naind);
+      arma::vec mu1 = beta(naind1) + (Sigma12 * Sigma22.i() * (beta(naind).t()-Y.submat(rowind, naind.t())).t());
+
+      arma::mat tmp = mvrnormArma(1,mu1,Sigma11-Sigma12*Sigma22.i()*Sigma21);
       Y.submat(rowind, naind1.t()) = tmp;
       //arma::rowvec Ytemp = Y(rowind, naind.t());
       L = L + dmvnrm_arma(Y.row(i),
@@ -391,8 +401,8 @@ arma::vec betagam_accept_c(const arma::vec X,
                            const int change){
   //compute the target likelihood and the proposal ratio
   //to decide if you should accept the proposed beta and gamma
-  double newtarget = sum(get_target_c_new(X,Y,sigmabeta1,inputSigma,gam2,beta2));
-  double oldtarget = sum(get_target_c_new(X,Y,sigmabeta1,inputSigma,gam1,beta1));
+  double newtarget = sum(get_target_c(X,Y,sigmabeta1,inputSigma,gam2,beta2));
+  double oldtarget = sum(get_target_c(X,Y,sigmabeta1,inputSigma,gam1,beta1));
   double proposal_ratio = R::dnorm(beta1(changeind)-beta2(changeind),0,sqrt(Vbeta),true);
   int s1 = sum(gam1==1);
   int s2 = sum(gam2==1);
@@ -594,8 +604,8 @@ arma::vec betagam_accept_sw_c(const arma::vec X,
                               const int change,
                               const int T,
                               const arma::rowvec marcor){
-  double newtarget = sum(get_target_c_new(X,Y,sigmabeta1,inputSigma,gam2,beta2));
-  double oldtarget = sum(get_target_c_new(X,Y,sigmabeta1,inputSigma,gam1,beta1));
+  double newtarget = sum(get_target_c(X,Y,sigmabeta1,inputSigma,gam2,beta2));
+  double oldtarget = sum(get_target_c(X,Y,sigmabeta1,inputSigma,gam1,beta1));
   double proposal_ratio = R::dnorm(beta1(changeind)-beta2(changeind),0,sqrt(Vbeta),true);
   arma::rowvec marcor2 = min(marcor)+max(marcor)-marcor;
   if(change==1){
@@ -678,8 +688,8 @@ Rcpp::List update_betagam_sw_c(const arma::vec X,
       }
       arma::vec gam2 = gamtemp2;
       arma::vec beta2 = betatemp2;
-      double newtarget = sum(get_target_c_new(X,Y,sigmabeta,Sigma,gam2,beta2));
-      double oldtarget = sum(get_target_c_new(X,Y,sigmabeta,Sigma,gam1,beta1));
+      double newtarget = sum(get_target_c(X,Y,sigmabeta,Sigma,gam2,beta2));
+      double oldtarget = sum(get_target_c(X,Y,sigmabeta,Sigma,gam1,beta1));
       double A = newtarget-oldtarget + proposal_ratio;
       arma::vec check2 = runif(1,0,1); double check = check2(0);
       if(exp(A) > check){
@@ -785,7 +795,7 @@ Rcpp::List doMCMC_c(const arma::vec X,
     if(!arma::is_finite(outsb(i))){
       outsb(i) = 1000;
     }
-    tar.col(i) = get_target_c_new(X,Y,outsb(i), Sigma2,gam2, beta2);
+    tar.col(i) = get_target_c(X,Y,outsb(i), Sigma2,gam2, beta2);
     cout << i << "\n";
   }
   return Rcpp::List::create(
@@ -815,7 +825,7 @@ Rcpp::List run2chains_c(const arma::vec X,
   //initialize if not user-defined
   int T = Y.n_cols;
   int n = Y.n_rows;
-  int nu = T+4;
+  int nu = T+5;
 
   //marginal correlation
   // arma::rowvec marcor = arma::zeros<arma::rowvec>(T);
@@ -825,7 +835,7 @@ Rcpp::List run2chains_c(const arma::vec X,
   //   marcor(t) = sum(ycol(non_null)%X(non_null))/non_null.size();
   // }
   //initialize Vbeta
-  double Vbeta = mean(marcor%marcor) * 0.005;
+  double Vbeta = mean(marcor%marcor) * 0.0005;
 
   arma::mat outbeta1 = arma::zeros<arma::mat>(T, niter);
   arma::mat outgam1 = arma::zeros<arma::mat>(T,niter);
@@ -864,6 +874,7 @@ Rcpp::List run2chains_c(const arma::vec X,
     //                                     bgiter,
     //                                     switer,
     //                                     T);
+
     Rcpp::List bg = update_betagam_c(X,
                                      Y,
                                      outgam1.col(i-1),
@@ -889,7 +900,7 @@ Rcpp::List run2chains_c(const arma::vec X,
     if(!arma::is_finite(outsb1(i))){
       outsb1(i) = 1000;
     }
-    tar1.col(i) = get_target_c_new(X,
+    tar1.col(i) = get_target_c(X,
                               Y,
                               outsb1(i),
                               outSigma1.slice(i),
@@ -923,7 +934,7 @@ Rcpp::List run2chains_c(const arma::vec X,
     if(!arma::is_finite(outsb2(i))){
       outsb2(i) = 1000;
     }
-    tar2.col(i) = get_target_c_new(X,
+    tar2.col(i) = get_target_c(X,
              Y,
              outsb2(i),
              outSigma2.slice(i),

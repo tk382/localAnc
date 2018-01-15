@@ -8,13 +8,15 @@ update_betagam = function(X,
                           Vbeta,
                           bgiter,
                           T){
+  j = 1
+  plot(j, 0, ylim=c(-11750,-11650),xlim = c(0,400))
   for (i in 2:bgiter){
     temp = update_gamma(X, Y, gam1, marcor)
     gam2 = as.numeric(temp$newgamma);
     beta2 = beta1*gam2
     ind = which(gam2==1)
     beta2[ind] = beta1[ind] + rnorm(length(ind), 0, sqrt(Vbeta))
-    changeind = temp$changeind
+    changeind  = temp$changeind
     change = gam2[changeind]
     A = betagam_accept(X,
                        Y,
@@ -27,17 +29,21 @@ update_betagam = function(X,
                        changeind,
                        change,
                        T)
-    print(which(gam1!=gam2))
-    print(gam2[which(gam1!=gam2)])
-    print(A)
+    #print(which(gam1!=gam2))
+    #print(gam2[which(gam1!=gam2)])
+    #print(A)
     check = runif(1,0,1)
     if(exp(A[1]) > check){
-      print("make update!")
-      #gam1 = gam2; beta1 = beta2;
+      #print(which(gam1!=gam2))
+      #print(gam2[which(gam1!=gam2)])
+      gam1 = gam2; beta1 = beta2;
+      print(gam2)
+      points(j, get_target(X, Y, sigmabeta, Sigma, gam2, beta2, T)$L)
+      j = j+1
     }
-    i = i+1
+    #i = i+1
   }
-  return(list(gam = gam2, beta = beta2))
+  return(list(gam = gam1, beta = beta1))
 }
 
 update_gamma = function(X,
@@ -67,7 +73,10 @@ update_gamma = function(X,
     changeind = add
   }
   if (case==2){
-    remove = sample(ind1, size=1)
+    remove = ind1[1]
+    if(s>1){
+      remove = sample(ind1, size=1)
+    }
     newgamma[remove] = 0
     changeind = remove
   }
@@ -87,8 +96,8 @@ betagam_accept = function(X,
                           changeind,
                           change,
                           T){
-  newtarget = sum(get_target_new(X, Y, sigmabeta1, inputSigma, gam2, beta2, T))
-  oldtarget = sum(get_target_new(X, Y, sigmabeta1, inputSigma, gam1, beta1, T))
+  newtarget = (get_target(X, Y, sigmabeta1, inputSigma, gam2, beta2, T)$final)
+  oldtarget = (get_target(X, Y, sigmabeta1, inputSigma, gam1, beta1, T)$final)
   proposal_ratio = dnorm(beta1[changeind]-beta2[changeind],
                          0, sqrt(Vbeta), log = TRUE)
   s1 = sum(gam1==1)

@@ -33,8 +33,9 @@ for (k in 1:length(sigbetavec)){
   X = dat$X; Y = dat$Y; Sigma = dat$Sigma
   truebeta = rbind(truebeta, dat$beta)
   truegamma = rbind(truegamma, dat$gamma)
+  marcor = abs(colMeans(Y*X, na.rm=TRUE))
   for (j in 1:length(ratiovec)){
-    Vbeta = ratiovec[j] * truesigmabeta
+    Vbeta = ratiovec[j] *   mean(marcor^2)
     #saving
     beta = matrix(0, niter, T)
     gamma = matrix(0, niter, T)
@@ -43,7 +44,8 @@ for (k in 1:length(sigbetavec)){
 
     #initialize
     beta[1,] = colMeans(X*Y, na.rm = TRUE)
-    gamma[1,]= sample(c(0,1), T, replace=TRUE)
+    gamma[1,] = rep(0,5)
+    #gamma[1,]= sample(c(0,5), T, replace=TRUE)
     beta[1,] = beta[1,] * gamma[1,]
     Sigma[,,1] = em_with_zero_mean_c(Y, 100)$Sigma
     Sigma[,,1] = dat$Sigma
@@ -82,17 +84,18 @@ for (k in 1:length(sigbetavec)){
         colmean = colMeans(gamma[2:i, ])
         if(identical(as.numeric(colmean>0.5), as.numeric(dat$gamma==1))){
           save_convergence_iter[k,j] = i
+          break;
         }
       }
       if(i%%10==0){print(i)}
     }
     library(reshape2); library(ggplot2)
 
-    niter=100
+    nniter=i
     colors <- c("lightblue", "darkblue")
-    datgamma = as.data.frame(gamma[1:niter, ])
+    datgamma = as.data.frame(gamma[1:nniter, ])
     colnames(datgamma) = paste0("var",1:T)
-    rownames(datgamma) = paste0("iter",1:niter)
+    rownames(datgamma) = paste0("iter",1:nniter)
     datgamma$id = rownames(datgamma)
     datgamma$id = factor(datgamma$id, levels = datgamma$id)
     colnames(datgamma) = factor(colnames(datgamma), levels = colnames(datgamma))
@@ -109,21 +112,21 @@ for (k in 1:length(sigbetavec)){
       xlab("gamma")+
       theme(axis.text.y=element_blank())+
       ggtitle(paste(sigbetavec[k], ratiovec[j]))
-    ggsave(filename=paste0(sigbetavec[k], '_', ratiovec[j],'_gamma.png'))
+    ggsave(filename=paste0('sens_2/',sigbetavec[k], '_', ratiovec[j],'_gamma.png'))
 
-    datbeta = as.data.frame(beta[1:niter,])
+    datbeta = as.data.frame(beta[1:nniter,])
     colnames(datbeta) = paste0("var",1:T)
-    rownames(datbeta) = paste0("iter",1:niter)
+    rownames(datbeta) = paste0("iter",1:nniter)
     datbeta$id = rownames(datbeta)
     datbeta$id = factor(datbeta$id, levels=datbeta$id)
     datbeta2= melt(datbeta)
-    datbeta2$xx = rep(1:niter, T)
+    datbeta2$xx = rep(1:nniter, T)
     ggplot(datbeta2, aes(x=xx, y=value, col=variable))+
       geom_line()+
       ylab('beta')+
       xlab('iteration')+
       ggtitle(paste(sigbetavec[k], ratiovec[j]))
-    ggsave(filename=paste0(sigbetavec[k], '_', ratiovec[j],'_beta.png'))
+    ggsave(filename=paste0('sens_2/',sigbetavec[k], '_', ratiovec[j],'_beta.png'))
   }
 }
 

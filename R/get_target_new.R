@@ -4,13 +4,14 @@ get_target_new = function(X, YY, sigmabeta, Sigma, gam, beta, T){
   for (i in 1:n){
     ind = which(is.na(Y[i,]))
     if(length(ind)<T){
-      mu1 = rep(0, length(ind))
       Sigma11 = Sigma[ind,ind]; Sigma12 = Sigma[ind, -ind]; Sigma21 = Sigma[-ind,ind]
       Sigma22 = Sigma[-ind,-ind]
+      mu1 = beta[ind] + Sigma12 %*% solve(Sigma22) %*% (Y[i,-ind]-beta[-ind])
+
       Y[i,ind] = mvrnormArma(1, mu1, Sigma11-Sigma12 %*% solve(Sigma22) %*% Sigma21)
       # Y[i, -ind] = mvrnormArma(1, rep(0, T-length(ind)), Sigma[-ind,-ind])
     }
-    #print(dmvnrm_arma(Y[i, ], X[i]*beta, Sigma, T, logd=TRUE))
+    # print(dmvnrm_arma(Y[i, ], X[i]*beta, Sigma, T, logd=TRUE))
     L = L+dmvnrm_arma(Y[i, ], X[i]*beta, Sigma, T, logd=TRUE)
   }
   ind = which(gam==1);
@@ -22,5 +23,5 @@ get_target_new = function(X, YY, sigmabeta, Sigma, gam, beta, T){
                   log=TRUE))
   }
   G = log(beta(s+1, T-s+1))
-  return(c(L,B,G))
+  return(list(L=L,B=B,G=G,final=L+B+G))
 }

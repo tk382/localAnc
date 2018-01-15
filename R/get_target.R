@@ -1,5 +1,6 @@
 get_target = function(X, Y, sigmabeta, Sigma, gam, beta, T){
-  L=0
+  #L=0
+  L = rep(0, n)
   for (i in 1:n){
     ind = which(!is.na(Y[i,]))
     if(sum(ind)>0){
@@ -7,8 +8,9 @@ get_target = function(X, Y, sigmabeta, Sigma, gam, beta, T){
                                  X[i]*beta[ind],
                                  matrix(Sigma[ind,ind], nrow=length(ind)),
                                  T,
-                                 logd=TRUE)/length(ind)*T
-      L = L + thing.to.add
+                                 logd=TRUE)
+      #L = L + thing.to.add
+      L[i] = thing.to.add
     }
   }
   ind = which(gam==1);
@@ -20,6 +22,7 @@ get_target = function(X, Y, sigmabeta, Sigma, gam, beta, T){
                             log=TRUE))
   }
   G = log(beta(s+1, T-s+1))
-
-  return(c(L,B,G))
+  #return(L)
+  return(list(L=(sum(L) * nrow(Y)*ncol(Y)/sum(is.na(Y))),B=B,G=G,final=(sum(L) * nrow(Y)*ncol(Y)/sum(is.na(Y)))+B+G))
+  #return(c(L,B,G))
 }
