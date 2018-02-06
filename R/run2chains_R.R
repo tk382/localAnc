@@ -31,7 +31,7 @@ run2chains_R = function(X,Y,
 
   for (i in 2:niter){
     ##chain 1 update
-    bg = update_betagam(X,
+    bg = update_betagam_sw(X,
                         Y,
                         outgam1[i-1,],
                         outbeta1[i-1,],

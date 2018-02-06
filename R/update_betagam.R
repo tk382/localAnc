@@ -8,11 +8,9 @@ update_betagam = function(X,
                           Vbeta,
                           bgiter,
                           T){
-  j = 1
-  plot(j, 0, ylim=c(-11750,-11650),xlim = c(0,400))
   for (i in 2:bgiter){
     temp = update_gamma(X, Y, gam1, marcor)
-    gam2 = as.numeric(temp$newgamma);
+    gam2 = as.numeric(temp$newgamma)
     beta2 = beta1*gam2
     ind = which(gam2==1)
     beta2[ind] = beta1[ind] + rnorm(length(ind), 0, sqrt(Vbeta))
@@ -29,19 +27,10 @@ update_betagam = function(X,
                        changeind,
                        change,
                        T)
-    #print(which(gam1!=gam2))
-    #print(gam2[which(gam1!=gam2)])
-    #print(A)
     check = runif(1,0,1)
     if(exp(A[1]) > check){
-      #print(which(gam1!=gam2))
-      #print(gam2[which(gam1!=gam2)])
       gam1 = gam2; beta1 = beta2;
-      print(gam2)
-      points(j, get_target(X, Y, sigmabeta, Sigma, gam2, beta2, T)$L)
-      j = j+1
     }
-    #i = i+1
   }
   return(list(gam = gam1, beta = beta1))
 }
@@ -96,6 +85,9 @@ betagam_accept = function(X,
                           changeind,
                           change,
                           T){
+
+  #X,  Y,  sigmabeta,  Sigma,  Vbeta,  marcor,  gam1, beta1,  gam2, beta2,  changeind,
+  #change,  T
   newtarget = (get_target(X, Y, sigmabeta1, inputSigma, gam2, beta2, T)$final)
   oldtarget = (get_target(X, Y, sigmabeta1, inputSigma, gam1, beta1, T)$final)
   proposal_ratio = dnorm(beta1[changeind]-beta2[changeind],
