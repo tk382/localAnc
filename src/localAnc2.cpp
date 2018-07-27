@@ -1,9 +1,146 @@
+
+
+//fix sigmabeta as the empirical variance
+//don't update h
+//Restrict the prior for Sigma
+
+
 #include <RcppArmadillo.h>
 #include <RcppArmadilloExtensions/sample.h>
 using namespace Rcpp;
 using namespace std;
 
 const double log2pi = std::log(2.0 * M_PI);
+
+
+// [[Rcpp::depends("RcppArmadillo")]]
+// [[Rcpp::export]]
+arma::rowvec colmeanNA(arma::mat Y){
+  int T = Y.n_cols;
+  arma::rowvec colmean = arma::zeros<arma::rowvec>(T);
+  for (int i=0; i < T; ++i){
+    arma::vec ycol = Y.col(i);
+    arma::uvec finiteind = find_finite(ycol);
+    arma::vec yy = ycol(finiteind);
+    colmean(i) = mean(yy);
+  }
+  return colmean;
+}
+
+// [[Rcpp::depends("RcppArmadillo")]]
+// [[Rcpp::export]]
+int sample_index(const int size,
+                 const NumericVector prob = NumericVector::create()){
+  //sample one number from 1:size
+  arma::vec sequence = arma::linspace<arma::vec>(1, size, size);
+  arma::vec out = Rcpp::RcppArmadillo::sample(sequence, size, false, prob);
+  return out(0);
+}
+
+// [[Rcpp::depends("RcppArmadillo")]]
+// [[Rcpp::export]]
+arma::mat mvrnormArma(const int n,
+                      const arma::vec mu,
+                      const arma::mat Sigma) {
+  //returns random multivariate normal vectors with mean mu and covariance Sigma
+  //input : integer n for the number of vectors you'd like to draw
+  //      : vector mu for the mean
+  //      : matrix Sigma for the covariance - needs to be psd
+  int ncols = Sigma.n_cols;
+  arma::mat Y = arma::randn(n, ncols);
+  return arma::repmat(mu, 1, n).t() + Y * arma::chol(Sigma);
+}
+
+// [[Rcpp::depends("RcppArmadillo")]]
+// [[Rcpp::export]]
+double dmvnrm_arma(const arma::rowvec x,
+                   const arma::rowvec mean,
+                   const arma::mat sigma,
+                   const bool logd = false) {
+  //returns the density of a multivariate normal vector
+  //input : a rowvector x whose density you'd like to know
+  //      : a rowvector mean for the mean of mvn
+  //      : a matrix Sigma for covariance, needs to be psd
+  //      : a boolean logd, true if you like the log density
+  int xdim = x.n_cols;
+  if(xdim==0){return 0;}
+  double out;
+  arma::mat rooti = arma::trans(arma::inv(trimatu(arma::chol(sigma))));
+  double rootisum = arma::sum(log(rooti.diag()));
+  double constants = -(static_cast<double>(xdim)/2.0) * log2pi;
+  arma::vec z = rooti*arma::trans(x-mean);
+  out = constants - 0.5*arma::sum(z%z)+rootisum;
+  if (logd == false){
+    out = exp(out);
+  }
+  return(out);
+}
+
+// [[Rcpp::depends("RcppArmadillo")]]
+// [[Rcpp::export]]
+arma::mat em_cov_c(arma::mat y,
+                    const int maxit){
+  int orig_p = y.n_cols;
+  arma::vec vars = arma::zeros<arma::vec>(orig_p);
+  arma::rowvec means = arma::zeros<arma::rowvec>(orig_p);
+  for (int i=0; i < orig_p; ++i){
+    arma::vec ycol = y.col(i);
+    arma::uvec finiteind = find_finite(ycol);
+    arma::vec yy = ycol(finiteind);
+    means(i) = mean(yy);
+    vars(i) = sum((yy-means(i))%(yy-means(i)));
+  }
+  arma::uvec valid_ind = find(vars>1e-6);
+  y = y.cols(valid_ind);
+  int p = y.n_cols;
+  int n = y.n_rows;
+  arma::rowvec mu = arma::zeros<arma::rowvec>(p);
+  arma::mat y_imputed = y;
+  for (int j = 0; j < p; ++j){
+    arma::uvec colind = arma::zeros<arma::uvec>(1);
+    colind(0) = j;
+    arma::uvec nawhere = find_nonfinite(y_imputed.col(j));
+    arma::uvec nonnawhere = find_finite(y_imputed.col(j));
+    arma::vec tempcolmean = mean(y_imputed(nonnawhere, colind), 0);
+    y_imputed(nawhere, colind).fill(tempcolmean(0));
+  }
+  arma::mat oldSigma = y_imputed.t() * y_imputed / n;
+  arma::mat Sigma = oldSigma;
+  double diff = 1;
+  int it = 1;
+  while (diff>0.001 && it < maxit){
+    arma::mat bias = arma::zeros<arma::mat>(p,p);
+    for (int i=0; i<n; ++i){
+      arma::rowvec tempdat = y.row(i);
+      arma::uvec ind = find_finite(tempdat);
+      arma::uvec nind = find_nonfinite(tempdat);
+      if (0 < ind.size() && ind.size() < p){
+        bias(nind, nind) += Sigma(nind, nind) - Sigma(nind, ind) * (Sigma(ind, ind).i()) * Sigma(ind, nind);
+        arma::uvec rowind = arma::zeros<arma::uvec>(1);
+        rowind(0) = i;
+        arma::mat yvec = y(rowind, ind);
+        y_imputed(rowind, nind) = means(nind).t() + (Sigma(nind, ind)*(Sigma(ind, ind).i())*y(rowind, ind).t()).t();
+      }
+    }
+    //update mean
+    for (int j=0; j < orig_p; ++j){
+      arma::vec ycol = y.col(j);
+      arma::uvec finiteind = find_finite(ycol);
+      arma::vec yy = ycol(finiteind);
+      means(j) = mean(yy);
+    }
+    Sigma = cov(y_imputed) + bias/n;
+    arma::mat diffmat = (Sigma-oldSigma);
+    arma::mat diffsq = diffmat%diffmat;
+    diff = accu(diffsq);
+    oldSigma = Sigma;
+    it = it + 1;
+  }
+  arma::mat finalSigma = arma::zeros<arma::mat>(orig_p, orig_p);
+  finalSigma.submat(valid_ind, valid_ind.t()) = Sigma;
+  return finalSigma;
+}
+
 
 
 // [[Rcpp::depends("RcppArmadillo")]]
@@ -71,42 +208,31 @@ arma::mat em_with_zero_mean_c(arma::mat y,
 
 // [[Rcpp::depends("RcppArmadillo")]]
 // [[Rcpp::export]]
-arma::mat mvrnormArma(const int n,
-                      const arma::vec mu,
-                      const arma::mat Sigma) {
-  //returns random multivariate normal vectors with mean mu and covariance Sigma
-  //input : integer n for the number of vectors you'd like to draw
-  //      : vector mu for the mean
-  //      : matrix Sigma for the covariance - needs to be psd
-  int ncols = Sigma.n_cols;
-  arma::mat Y = arma::randn(n, ncols);
-  return arma::repmat(mu, 1, n).t() + Y * arma::chol(Sigma);
+arma::cube rinvwish_c(const int n,
+                      const int v,
+                      const arma::mat S){
+  //draw a matrix from inverse wishart distribution with parameters S and v
+  RNGScope scope;
+  int p = S.n_rows;
+  arma::mat L = chol(inv_sympd(S), "lower");
+  arma::cube sims(p, p, n, arma::fill::zeros);
+  for(int j = 0; j < n; j++){
+    arma::mat A(p,p, arma::fill::zeros);
+    for(int i = 0; i < p; i++){
+      int df = v - (i + 1) + 1; //zero-indexing
+      A(i,i) = sqrt(R::rchisq(df));
+    }
+    for(int row = 1; row < p; row++){
+      for(int col = 0; col < row; col++){
+        A(row, col) = R::rnorm(0,1);
+      }
+    }
+    arma::mat LA_inv = inv(trimatl(trimatl(L) * trimatl(A)));
+    sims.slice(j) = LA_inv.t() * LA_inv;
+  }
+  return(sims);
 }
 
-// [[Rcpp::depends("RcppArmadillo")]]
-// [[Rcpp::export]]
-double dmvnrm_arma(const arma::rowvec x,
-                   const arma::rowvec mean,
-                   const arma::mat sigma,
-                   const bool logd = false) {
-  //returns the density of a multivariate normal vector
-  //input : a rowvector x whose density you'd like to know
-  //      : a rowvector mean for the mean of mvn
-  //      : a matrix Sigma for covariance, needs to be psd
-  //      : a boolean logd, true if you like the log density
-  int xdim = x.n_cols;
-  if(xdim==0){return 0;}
-  double out;
-  arma::mat rooti = arma::trans(arma::inv(trimatu(arma::chol(sigma))));
-  double rootisum = arma::sum(log(rooti.diag()));
-  double constants = -(static_cast<double>(xdim)/2.0) * log2pi;
-  arma::vec z = rooti*arma::trans(x-mean);
-  out = constants - 0.5*arma::sum(z%z)+rootisum;
-  if (logd == false) {
-    out = exp(out);
-  }
-  return(out);
-}
 
 // [[Rcpp::depends("RcppArmadillo")]]
 // [[Rcpp::export]]
@@ -120,7 +246,7 @@ double get_sigmabeta_from_h_c(const double h,
   arma::vec ds = Sigma.diag();
   double num = h * sum(ds);
   arma::uvec ind = find(gam == 1);
-  double denom = (1-h)*sum(ds(ind)) * sum(X%X)/n;
+  double denom = (1-h)*sum(ds(ind)) * sum(X%X)/n + 1;
   return num/denom;
 }
 
@@ -184,24 +310,16 @@ arma::vec get_target_c(const arma::vec X,
   return out;
 }
 
-// [[Rcpp::depends("RcppArmadillo")]]
-// [[Rcpp::export]]
-int sample_index(const int size,
-                 const NumericVector prob = NumericVector::create()){
-  //sample one number from 1:size
-  arma::vec sequence = arma::linspace<arma::vec>(1, size, size);
-  arma::vec out = Rcpp::RcppArmadillo::sample(sequence, size, false, prob);
-  return out(0);
-}
 
 
 // [[Rcpp::depends("RcppArmadillo")]]
 // [[Rcpp::export]]
 Rcpp::List update_gamma_c(const arma::vec X,
                           const arma::mat Y,
-                          const arma::vec gam){
+                          const arma::vec gam,
+                          const arma::rowvec marcor){
   //update gamma once
-  int changeind = 0;
+  int changeind;
   arma::vec newgam = gam;
   int T = gam.size();
   arma::vec prob = arma::zeros<arma::vec>(2);
@@ -210,31 +328,27 @@ Rcpp::List update_gamma_c(const arma::vec X,
   arma::uvec ind1 = find(gam==1);
   int s = ind1.size();
   NumericVector prob2 = wrap(prob);
-  int cas = sample_index(2, prob2);
+  int cas;
   if(s==0){
     cas = 1;
   }else if(s==T){
     cas = 2;
+  }else{
+    cas = sample_index(2, prob2);
   }
   if (cas==1){
-    arma::rowvec marcor = arma::zeros<arma::rowvec>(ind0.size());
-    for (int t=0; t<ind0.size(); ++t){
-      arma::vec temp = Y.col(ind0(t));
-      arma::uvec tempind = find_finite(temp);
-      marcor(t) = abs(sum(temp(tempind)%X(tempind)))/tempind.size();
-    }
     int add = 1;
     if(s<(T-1)){
-      NumericVector marcor2 = wrap(marcor);
-      add = sample_index(ind0.size(), marcor2);
+      arma::vec mc = marcor(ind0);
+      NumericVector mc2 = wrap(mc);
+      add = sample_index(ind0.size(), mc2);
     }
     newgam(ind0(add-1)) = 1;
     changeind = ind0(add-1);
-  }else if(cas==2){
+  }else{
     int remove = sample_index(s);
-    remove = ind1(remove-1);
-    newgam(remove) = 0;
-    changeind = remove;
+    newgam(ind1(remove-1)) = 0;
+    changeind = ind1(remove-1);
   }
   return(
     Rcpp::List::create(
@@ -243,6 +357,9 @@ Rcpp::List update_gamma_c(const arma::vec X,
   );
 }
 
+
+
+
 // [[Rcpp::depends("RcppArmadillo")]]
 // [[Rcpp::export]]
 arma::vec betagam_accept_c(const arma::vec X,
@@ -250,6 +367,7 @@ arma::vec betagam_accept_c(const arma::vec X,
                            const double sigmabeta1,
                            const arma::mat inputSigma,
                            const double Vbeta,
+                           const arma::rowvec marcor,
                            const arma::vec gam1,
                            const arma::vec beta1,
                            const arma::vec gam2,
@@ -261,15 +379,8 @@ arma::vec betagam_accept_c(const arma::vec X,
   double newtarget = sum(get_target_c(X,Y,sigmabeta1,inputSigma,gam2,beta2));
   double oldtarget = sum(get_target_c(X,Y,sigmabeta1,inputSigma,gam1,beta1));
   double proposal_ratio = R::dnorm(beta1(changeind)-beta2(changeind),0,sqrt(Vbeta),true);
-  int T = gam1.size();
   int s1 = sum(gam1==1);
   int s2 = sum(gam2==1);
-  arma::rowvec marcor = arma::zeros<arma::rowvec>(T);
-  for (int t=0; t<T; ++t){
-    arma::vec temp = Y.col(t);
-    arma::uvec tempind = find_finite(temp);
-    marcor(t) = abs(sum(temp(tempind)%X(tempind)))/tempind.size();
-  }
   if(change==1){
     arma::uvec ind1 = find(gam1==0);
     double temp1 = marcor(changeind)/sum(marcor(ind1));
@@ -288,42 +399,47 @@ arma::vec betagam_accept_c(const arma::vec X,
   return(out);
 }
 
+
 // [[Rcpp::depends("RcppArmadillo")]]
 // [[Rcpp::export]]
-Rcpp::List update_betagam_c(const arma::vec X,
-                            const arma::mat Y,
-                            arma::vec gam1,
-                            arma::vec beta1,
-                            const arma::mat Sigma,
-                            const double sigmabeta,
-                            const double Vbeta,
-                            const int bgiter){
-  //update and beta and gamma 'bgiter' times
-  for (int i=1; i<bgiter; ++i){
-    Rcpp::List temp = update_gamma_c(X,Y,gam1);
-    arma::vec gam2 = as<arma::vec>(temp["gam"]);
-    arma::vec beta2 = beta1 % gam2;
-    arma::uvec ind = find(gam2==1);
-    beta2(ind) = beta1(ind) + as<arma::vec>(rnorm(ind.size(), 0, sqrt(Vbeta)));
-    int changeind = temp["changeind"];
-    int change = gam2(changeind);
-    arma::vec A = betagam_accept_c(X,Y,sigmabeta,
-                                   Sigma,Vbeta,
-                                   gam1,beta1,
-                                   gam2,beta2,
-                                   changeind,change);
-    NumericVector check2 = runif(1);
-    double check = check2(0);
-    if(exp(A(0))>check){
-      gam1 = gam2; beta1 = beta2;
-    }
+arma::vec betagam_accept_sw_c(const arma::vec X,
+                              const arma::mat Y,
+                              const double sigmabeta1,
+                              const arma::mat inputSigma,
+                              const double Vbeta,
+                              const arma::rowvec marcor,
+                              const arma::vec gam1,
+                              const arma::vec beta1,
+                              const arma::vec gam2,
+                              const arma::vec beta2,
+                              const int changeind,
+                              const int change){
+  double newtarget = sum(get_target_c(X,Y,sigmabeta1,inputSigma,gam2,beta2));
+  double oldtarget = sum(get_target_c(X,Y,sigmabeta1,inputSigma,gam1,beta1));
+  double proposal_iter = R::dnorm(beta1(changeind)-beta2(changeind),0,sqrt(Vbeta),true);
+  arma::rowvec marcor2 = min(marcor)+max(marcor)-marcor;
+  double proposal_ratio = 0;
+  if(change==1){
+    arma::uvec ind1 = find(gam1==0);
+    arma::uvec ind2 = find(gam2==1);
+    double tempadd = marcor(changeind)/sum(marcor(ind1));
+    double tempremove = marcor2(changeind)/sum(marcor2(ind2));
+    proposal_ratio = -log(tempadd)+log(tempremove)-proposal_iter;
+  }else{
+    arma::uvec ind1 = find(gam1==1);
+    arma::uvec ind2 = find(gam2==0);
+    double tempadd = marcor(changeind)/sum(marcor(ind2));
+    double tempremove = marcor2(changeind) / sum(marcor2(ind1));
+    proposal_ratio = log(tempadd)-log(tempremove)+proposal_iter;
   }
-  return Rcpp::List::create(
-    Rcpp::Named("gam") = gam1,
-    Rcpp::Named("beta") = beta1
-  );
+  double final_ratio = newtarget-oldtarget+proposal_ratio;
+  arma::vec out = arma::zeros<arma::vec>(4);
+  out(0) = final_ratio;
+  out(1) = newtarget;
+  out(2) = oldtarget;
+  out(3) = proposal_ratio;
+  return(out);
 }
-
 
 
 // [[Rcpp::depends("RcppArmadillo")]]
@@ -341,11 +457,11 @@ Rcpp::List update_h_c(const double initialh,
   arma::vec ds = Sig.diag();
   for (int i=1; i<hiter; ++i){
     double h2 = h1;
-    NumericVector(rr) = runif(1, -0.1, 0.1);
+    NumericVector(rr) = runif(1, -0.05, 0.05);
     double r = rr(0);
     h2 = h2 + r;
-    if(h2<0){h2 = abs(h2);}
-    if(h2>1){h2 = 2-h2;}
+    if(h2<1e-3){h2 = abs(2*1e-6 - h2);}
+    if(h2>0.9){h2 = 1.8-h2;}
     arma::uvec ind = find(gam==1);
     double sigmabeta1 = get_sigmabeta_from_h_c(h1, gam, Sig, X, T);
     double sigmabeta2 = get_sigmabeta_from_h_c(h2, gam, Sig, X, T);
@@ -369,34 +485,6 @@ Rcpp::List update_h_c(const double initialh,
 }
 
 
-
-// [[Rcpp::depends("RcppArmadillo")]]
-// [[Rcpp::export]]
-arma::cube rinvwish_c(const int n,
-                      const int v,
-                      const arma::mat S){
-  //draw a matrix from inverse wishart distribution with parameters S and v
-  RNGScope scope;
-  int p = S.n_rows;
-  arma::mat L = chol(inv_sympd(S), "lower");
-  arma::cube sims(p, p, n, arma::fill::zeros);
-  for(int j = 0; j < n; j++){
-    arma::mat A(p,p, arma::fill::zeros);
-    for(int i = 0; i < p; i++){
-      int df = v - (i + 1) + 1; //zero-indexing
-      A(i,i) = sqrt(R::rchisq(df));
-    }
-    for(int row = 1; row < p; row++){
-      for(int col = 0; col < row; col++){
-        A(row, col) = R::rnorm(0,1);
-      }
-    }
-    arma::mat LA_inv = inv(trimatl(trimatl(L) * trimatl(A)));
-    sims.slice(j) = LA_inv.t() * LA_inv;
-  }
-  return(sims);
-}
-
 // [[Rcpp::depends("RcppArmadillo")]]
 // [[Rcpp::export]]
 arma::mat update_Sigma_c(const int n,
@@ -411,6 +499,13 @@ arma::mat update_Sigma_c(const int n,
   arma::mat beta2 = arma::zeros<arma::mat>(T,1);
   beta2.col(0) = beta;
   arma::mat r = Y - X2 * beta2.t();
+  // arma::rowvec colmean = arma::zeros<arma::rowvec>(T);
+  // for (int i = 0; i < T; ++i){
+  //   arma::vec rcol = r.col(i);
+  //   arma::uvec finiteind = find_finite(rcol);
+  //   colmean(i) = mean(rcol(finiteind));
+  // }
+  // r = r.each_row() - colmean;
   arma::mat emp = em_with_zero_mean_c(r,100);
   arma::cube res = rinvwish_c(1, n+nu, emp*n + Phi*nu);
   return res.slice(0);
@@ -424,7 +519,7 @@ Rcpp::List update_gamma_sw_c(const arma::vec X,
                              const arma::rowvec marcor){
   int changeind = 0;
   //flip marcor
-  arma::rowvec marcor2 = (max(marcor) + min(marcor)) - marcor;
+  arma::rowvec marcor2 = max(marcor) + min(marcor) - marcor;
   arma::vec newgam = gam;
   int T = gam.size();
   arma::vec prob = arma::zeros<arma::vec>(2);
@@ -468,74 +563,62 @@ Rcpp::List update_gamma_sw_c(const arma::vec X,
 
 // [[Rcpp::depends("RcppArmadillo")]]
 // [[Rcpp::export]]
-arma::vec betagam_accept_sw_c(const arma::vec X,
-                              const arma::mat Y,
-                              const double sigmabeta1,
-                              const arma::mat inputSigma,
-                              const double Vbeta,
-                              const arma::vec gam1,
-                              const arma::vec beta1,
-                              const arma::vec gam2,
-                              const arma::vec beta2,
-                              const int changeind,
-                              const int change){
-  double newtarget = sum(get_target_c(X,Y,sigmabeta1,inputSigma,gam2,beta2));
-  double oldtarget = sum(get_target_c(X,Y,sigmabeta1,inputSigma,gam1,beta1));
-  double proposal_ratio = R::dnorm(beta1(changeind)-beta2(changeind),0,sqrt(Vbeta),true);
-  int T = gam1.size();
-  arma::rowvec marcor = arma::zeros<arma::rowvec>(T);
-  for (int t=0; t<T; ++t){
-    arma::vec temp = Y.col(t);
-    arma::uvec tempind = find_finite(temp);
-    marcor(t) = abs(sum(temp(tempind)%X(tempind)))/tempind.size();
+Rcpp::List update_betagam_c(const arma::vec X,
+                            const arma::mat Y,
+                            arma::vec gam1,
+                            arma::vec beta1,
+                            const arma::mat Sigma,
+                            const double sigmabeta,
+                            const double Vbeta,
+                            const arma::rowvec marcor,
+                            const int bgiter){
+  //update and beta and gamma 'bgiter' times
+  for (int i=1; i<bgiter; ++i){
+    Rcpp::List temp = update_gamma_c(X,Y,gam1, marcor);
+    arma::vec gam2 = as<arma::vec>(temp["gam"]);
+    arma::vec beta2 = beta1 % gam2;
+    arma::uvec ind = find(gam2==1);
+    beta2(ind) = beta1(ind) + as<arma::vec>(rnorm(ind.size(), 0, sqrt(Vbeta)));
+    int changeind = temp["changeind"];
+
+    int change = gam2(changeind);
+    arma::vec A = betagam_accept_c(X,Y,sigmabeta,
+                                   Sigma,Vbeta,marcor,
+                                   gam1,beta1,
+                                   gam2,beta2,
+                                   changeind,change);
+    NumericVector check2 = runif(1);
+    double check = check2(0);
+    // cout << check;
+    if(exp(A(0))>check){
+      gam1 = gam2; beta1 = beta2;
+    }
   }
-  arma::rowvec marcor2 = min(marcor)+max(marcor)-marcor;
-  if(change==1){
-    arma::uvec ind1 = find(gam1==0);
-    arma::uvec ind2 = find(gam2==1);
-    double tempadd = marcor(changeind)/sum(marcor(ind1));
-    double tempremove = marcor2(changeind)/sum(marcor2(ind2));
-    proposal_ratio = -log(tempadd)-log(tempremove)-proposal_ratio;
-  }else{
-    arma::uvec ind1 = find(gam1==1);
-    arma::uvec ind2 = find(gam2==0);
-    double tempadd = marcor(changeind)/sum(marcor(ind2));
-    double tempremove = marcor2(changeind) / sum(marcor2(ind1));
-    proposal_ratio = log(tempadd)+log(tempremove)+proposal_ratio;
-  }
-  double final_ratio = newtarget-oldtarget+proposal_ratio;
-  arma::vec out = arma::zeros<arma::vec>(4);
-  out(0) = final_ratio;
-  out(1) = newtarget;
-  out(2) = oldtarget;
-  out(3) = proposal_ratio;
-  return(out);
+  return Rcpp::List::create(
+    Rcpp::Named("gam") = gam1,
+    Rcpp::Named("beta") = beta1
+  );
 }
+
 
 // [[Rcpp::depends("RcppArmadillo")]]
 // [[Rcpp::export]]
 Rcpp::List update_betagam_sw_c(const arma::vec X,
                                const arma::mat Y,
-                               const arma::vec gam1,
-                               const arma::vec beta1,
+                               arma::vec gam1,
+                               arma::vec beta1,
                                const arma::mat Sigma,
                                const arma::rowvec marcor,
                                const double sigmabeta,
                                const double Vbeta,
                                const int bgiter,
-                               const int smallworlditer){
-  int T = gam1.size();
-  arma::mat outgamma = arma::zeros<arma::mat>(T,bgiter);
-  arma::mat outbeta = arma::zeros<arma::mat>(T,bgiter);
-  outgamma.col(0) = gam1;
-  outbeta.col(0) = beta1;
-  arma::vec tar = arma::zeros<arma::vec>(bgiter);
+                               const int smallworlditer,
+                               const double smallchange){
+  arma::vec gam2;
+  arma::vec beta2;
   for (int i=1; i<bgiter; ++i){
-    Rcpp::List temp = update_gamma_sw_c(X,Y,outgamma.col(i-1), marcor);
-    arma::vec gam1 = outgamma.col(i-1);
-    arma::vec beta1 = outbeta.col(i-1);
-    //small world proposal
-    if(i%10==0){
+    if(i%20000==0){
+      //small world proposal
       double proposal_ratio = 0;
       arma::vec betatemp1 = beta1;
       arma::vec gamtemp1 = gam1;
@@ -544,77 +627,291 @@ Rcpp::List update_betagam_sw_c(const arma::vec X,
       for (int j=0; j < smallworlditer; ++j){
         Rcpp::List temp = update_gamma_sw_c(X,Y,gamtemp1, marcor);
         arma::vec gamtemp2 = as<arma::vec>(temp["gam"]);
+        int changeind = temp["changeind"];
         arma::vec betatemp2 = betatemp1 % gamtemp2;
         arma::uvec ind = find(gamtemp2==1);
-        betatemp2(ind) = betatemp1(ind) + as<arma::vec>(rnorm(ind.size(), 0, sqrt(Vbeta)));
-        int changeind = temp["changeind"];
+        //betatemp2(ind) = betatemp1(ind) + as<arma::vec>(rnorm(ind.size(), 0, sqrt(Vbeta)));
         int change = gamtemp2(changeind);
-        double proposaliter = R::dnorm(betatemp1(changeind)-betatemp2(changeind),
-                                       0,sqrt(Vbeta), true);
-        arma::rowvec marcor2 = -marcor + max(marcor) + 0.01;
+        //double proposaliter = R::dnorm(betatemp1(changeind)-betatemp2(changeind),
+        //                               0,sqrt(Vbeta), true);
+        double proposaliter = 0; //
+        arma::rowvec marcor2 = min(marcor) + max(marcor) - marcor;
         if(change==1){
+          betatemp2(changeind) = betatemp1(changeind) + (rnorm(1, 0, sqrt(Vbeta)))[0]; //
           arma::uvec ind1 = find(gamtemp1==0);
           arma::uvec ind2 = find(gamtemp2==1);
           double tempadd = marcor(changeind)/sum(marcor(ind1));
           double tempremove = marcor2(changeind)/sum(marcor2(ind2));
-          proposaliter = -log(tempadd)-log(tempremove)-proposaliter;
+          proposaliter = -log(tempadd)+log(tempremove)-proposaliter;
         }else{
+          betatemp2(changeind) = 0; //
           arma::uvec ind1 = find(gamtemp1==1);
           arma::uvec ind2 = find(gamtemp2==0);
           double tempadd = marcor(changeind)/sum(marcor(ind2));
           double tempremove = marcor2(changeind) / sum(marcor2(ind1));
-          proposaliter = log(tempadd)+log(tempremove)+proposaliter;
+          proposaliter = log(tempadd)-log(tempremove)+proposaliter;
         }
         proposal_ratio = proposal_ratio + proposaliter;
         gamtemp1 = gamtemp2; betatemp1 = betatemp2;
       }
-      arma::vec gam2 = gamtemp2;
-      arma::vec beta2 = betatemp2;
+      gam2 = gamtemp2;
+      beta2 = betatemp2;
       double newtarget = sum(get_target_c(X,Y,sigmabeta,Sigma,gam2,beta2));
       double oldtarget = sum(get_target_c(X,Y,sigmabeta,Sigma,gam1,beta1));
-      double A = newtarget-oldtarget + proposal_ratio;
+      double A = newtarget - oldtarget + proposal_ratio;
       arma::vec check2 = runif(1,0,1); double check = check2(0);
       if(exp(A) > check){
-        tar(i) = newtarget;
-        outgamma.col(i)= gam2;
-        outbeta.col(i) = beta2;
-      }else{
-        tar(i) = oldtarget;
-        outgamma.col(i) = gam1;
-        outbeta.col(i) = beta1;
+        gam1 = gam2;
+        beta1 = beta2;
       }
     }else{
-      Rcpp::List temp = update_gamma_sw_c(X,Y,gam1, marcor);
+      Rcpp::List temp = update_gamma_sw_c(X,Y,gam1,marcor);
       arma::vec gam2 = as<arma::vec>(temp["gam"]);
-      arma::vec beta2 = beta1 % gam2;
-      arma::uvec ind = find(gam2==1);
-      beta2(ind) = beta1(ind) + as<arma::vec>(rnorm(ind.size(), 0, sqrt(Vbeta)));
       int changeind = temp["changeind"];
       int change = gam2(changeind);
-      arma::vec A = betagam_accept_c(X,Y,sigmabeta,
-                                     Sigma,Vbeta,
+      arma::vec beta2 = beta1 % gam2;
+      if(change==1){
+        arma::uvec ind = find(gam1==1);
+        beta2(ind) = beta1(ind) + as<arma::vec>(rnorm(ind.size(), 0, sqrt(smallchange)));
+        beta2(changeind) = beta2(changeind) + (rnorm(1, 0, sqrt(Vbeta)))[0];
+      }else{
+        arma::uvec ind = find(gam2==1);
+        beta2(ind) = beta1(ind) + as<arma::vec>(rnorm(ind.size(), 0, sqrt(smallchange)));
+        beta2(changeind) = 0;
+      }
+      arma::vec A = betagam_accept_sw_c(X,Y,sigmabeta,
+                                     Sigma,Vbeta,marcor,
                                      gam1,beta1,
                                      gam2,beta2,
                                      changeind,change);
       NumericVector check2 = runif(1);
       double check = check2(0);
-      if(exp(A(0))>check){
-        tar(i) = A(1);
-        outgamma.col(i) = gam2; outbeta.col(i) = beta2;
-      }else{
-        tar(i) = A(2);
-        outgamma.col(i) = gam1; outbeta.col(i) = beta1;
+      // cout << check << "\n";
+      // cout << gam2.t() << "\n";
+      if(exp(A(0)) > check){
+        gam1 = gam2; beta1 = beta2;
       }
     }
   }
 
-  arma::vec outgamma2 = outgamma.col(bgiter-1);
-  arma::vec outbeta2 = outbeta.col(bgiter-1);
   return Rcpp::List::create(
-    Rcpp::Named("gam")= outgamma2,
-    Rcpp::Named("beta") = outbeta2,
-    Rcpp::Named("tar") = tar
+    Rcpp::Named("gam")= gam1,
+    Rcpp::Named("beta") = beta1
   );
+}
+
+
+// [[Rcpp::depends("RcppArmadillo")]]
+// [[Rcpp::export]]
+Rcpp::List run2chains_c(const arma::vec X,
+                        const arma::mat Y,
+                        const Rcpp::List initial_chain1,//const Rcpp::List initial_chain2,
+                        const arma::mat Phi,
+                        const arma::rowvec marcor,
+                        const double sigmabeta,
+                        const int niter   = 1000,
+                        const int bgiter  = 500,
+                        const int hiter   = 50,
+                        const int switer  = 50,
+                        const int burnin  = 5,
+                        const int Vbeta = 1,
+                        const double smallchange = 0.001){
+
+  //initialize if not user-defined
+  int T = Y.n_cols;
+  int n = Y.n_rows;
+  int nu = n;
+
+  //double Vbeta = mean(marcor%marcor) * Vbetaratio;
+  //double Vbeta = mean(marcor%marcor);
+
+  //marcor = (marcor + 10) / sum(marcor);
+
+  arma::mat outbeta1 = arma::zeros<arma::mat>(T, niter);
+  arma::mat outgam1 = arma::zeros<arma::mat>(T,niter);
+  arma::cube outSigma1 = arma::zeros<arma::cube>(T,T,niter);
+  arma::vec outsb1 = arma::zeros<arma::vec>(niter);
+  arma::vec outh1 = arma::zeros<arma::vec>(niter);
+  arma::mat tar1 = arma::zeros<arma::mat>(3, niter);
+
+  // arma::mat outbeta2 = arma::zeros<arma::mat>(T, niter);
+  // arma::mat outgam2 = arma::zeros<arma::mat>(T,niter);
+  // arma::cube outSigma2 = arma::zeros<arma::cube>(T,T,niter);
+  // arma::vec outsb2 = arma::zeros<arma::vec>(niter);
+  // arma::vec outh2 = arma::zeros<arma::vec>(niter);
+  // arma::mat tar2 = arma::zeros<arma::mat>(3, niter);
+
+
+  outbeta1.col(0)    = as<arma::vec>(initial_chain1["beta"]);
+  outgam1.col(0)     = as<arma::vec>(initial_chain1["gamma"]);
+  outSigma1.slice(0) = as<arma::mat>(initial_chain1["Sigma"]);
+  outsb1(0)          = initial_chain1["sigmabeta"];
+
+  // outbeta2.col(0)    = as<arma::vec>(initial_chain2["beta"]);
+  // outgam2.col(0)     = as<arma::vec>(initial_chain2["gamma"]);
+  // outSigma2.slice(0) = as<arma::mat>(initial_chain2["Sigma"]);
+  // outsb2(0)          = initial_chain2["sigmabeta"];
+
+  for (int i=1; i<niter; ++i){
+    Rcpp::List bg = update_betagam_sw_c(X,
+                                        Y,
+                                        outgam1.col(i-1),
+                                        outbeta1.col(i-1),
+                                        outSigma1.slice(i-1),
+                                        abs(marcor),
+                                        outsb1(i-1),
+                                        Vbeta,
+                                        bgiter,
+                                        switer,
+                                        smallchange);
+    outgam1.col(i)  = as<arma::vec>(bg["gam"]);
+    cout << outgam1.col(i).t() << "\n";
+    outbeta1.col(i) = as<arma::vec>(bg["beta"]);
+    outSigma1.slice(i) = update_Sigma_c(n,nu,X,outbeta1.col(i),Phi,Y);
+    // Rcpp::List hsig = update_h_c(outh1[i-1],
+    //                              hiter,
+    //                              outgam1.col(i),
+    //                              outbeta1.col(i),
+    //                              outSigma1.slice(i),
+    //                              X,
+    //                              T);
+    // outh1(i) = hsig["h"];
+    // outsb1(i) = hsig["sigbeta"];
+    outh1(i) = 0.5;
+    outsb1(i) = sigmabeta;
+    if(!arma::is_finite(outsb1(i))){
+     outsb1(i) = 1;
+    }
+
+    tar1.col(i) = get_target_c(X,
+                               Y,
+                               outsb1(i),
+                               outSigma1.slice(i),
+                               outgam1.col(i),
+                               outbeta1.col(i));
+
+    //chain 2 update
+    // bg = update_betagam_sw_c(X,
+    //                          Y,
+    //                          outgam2.col(i-1),
+    //                          outbeta2.col(i-1),
+    //                          outSigma2.slice(i-1),
+    //                          abs(marcor),
+    //                          outsb2(i-1),
+    //                          Vbeta,
+    //                          bgiter,
+    //                          switer,
+    //                          smallchange);
+    // outgam2.col(i)  = as<arma::vec>(bg["gam"]);
+    // cout << outgam2.col(i).t() << "\n";
+    // outbeta2.col(i) = as<arma::vec>(bg["beta"]);
+    // outSigma2.slice(i) = update_Sigma_c(n,nu,X,outbeta2.col(i),Phi,Y);
+    // // Rcpp::List hsig = update_h_c(outh2[i-1],
+    // //                   hiter,
+    // //                   outgam2.col(i),
+    // //                   outbeta2.col(i),
+    // //                   outSigma2.slice(i),
+    // //                   X,
+    // //                   T);
+    // // outh2(i) = hsig["h"];
+    // // outsb2(i) = hsig["sigbeta"];
+    // outh2(i) = 0.5;
+    // outsb2(i) = 10;
+    // if(!arma::is_finite(outsb2(i))){
+    //   outsb2(i) = 0;
+    // }
+    // tar2.col(i) = get_target_c(X,
+    //          Y,
+    //          outsb2(i),
+    //          outSigma2.slice(i),
+    //          outgam2.col(i),
+    //          outbeta2.col(i));
+
+
+        //convergence criterion
+    // if(i>2*burnin && i%5==0){
+    //   arma::vec rowmean1 = mean(outgam1.cols(burnin,i), 1);
+    //   arma::vec rowmean2 = mean(outgam2.cols(burnin,i), 1);
+    //   if(all(rowmean1<0.5) & all(rowmean2<0.5)){
+    //     cout<< "both chains selected no variables - converged!";
+    //     outSigma1.shed_slices(i+1, niter-1);  outSigma2.shed_slices(i+1,niter-1);
+    //     outgam1.shed_cols(i+1,niter-1);       outgam2.shed_cols(i+1,niter-1);
+    //     outbeta1.shed_cols(i+1, niter-1);     outbeta2.shed_cols(i+1, niter-1);
+    //     outh1.shed_rows(i+1,niter-1);         outh2.shed_rows(i+1, niter-1);
+    //     outsb1.shed_rows(i+1,niter-1);        outsb2.shed_rows(i+1,niter-1);
+    //     break;
+    //   }else{
+    //     arma::uvec est1 = find(rowmean1 > 0.5);
+    //     arma::uvec est2 = find(rowmean2 > 0.5);
+    //     if(est1.size()==est2.size() && all(est1==est2)){
+    //       arma::mat tmpbeta1 = outbeta1.cols(burnin,i);
+    //       arma::mat tmpbeta2 = outbeta2.cols(burnin,i);
+    //       arma::mat tmpgam1 = outgam1.cols(burnin,i);
+    //       arma::mat tmpgam2 = outgam2.cols(burnin,i);
+    //       double diff = 0;
+    //       for (int k = 0; k < est1.size(); ++k){
+    //         int kk = est1(k);
+    //         arma::uvec ones = find(tmpgam1.row(kk)==1);
+    //         arma::rowvec tmptmpbeta1 = tmpbeta1.row(kk);
+    //         double beta1 = mean(tmptmpbeta1(ones));
+    //         arma::uvec ones2 = find(tmpgam2.row(kk)==1);
+    //         arma::rowvec tmptmpbeta2 = tmpbeta2.row(kk);
+    //         double beta2 = mean(tmptmpbeta2(ones));
+    //         diff = diff + (beta1-beta2)*(beta1-beta2);
+    //       }
+    //       if(diff/est1.size() < 1e-2){
+    //         cout<< "beta difference is small between the two chains - converged!\n";
+    //         outSigma1.shed_slices(i+1, niter-1);  outSigma2.shed_slices(i+1,niter-1);
+    //         outgam1.shed_cols(i+1,niter-1);       outgam2.shed_cols(i+1,niter-1);
+    //         outbeta1.shed_cols(i+1, niter-1);     outbeta2.shed_cols(i+1, niter-1);
+    //         outh1.shed_rows(i+1,niter-1);         outh2.shed_rows(i+1, niter-1);
+    //         outsb1.shed_rows(i+1,niter-1);        outsb2.shed_rows(i+1,niter-1);
+    //         tar1.shed_cols(i+1, niter-1);         tar2.shed_cols(i+1, niter-1);
+    //         break;
+    //       }
+    //     }
+    //   }
+    // }
+    cout << i << "\n";
+  }
+
+  return Rcpp::List::create(
+    Rcpp::Named("gamma") = outgam1.t(),
+    Rcpp::Named("beta") = outbeta1.t(),
+    Rcpp::Named("Sigma") = outSigma1,
+    // Rcpp::Named("sigmabeta") = outsb1,
+    // Rcpp::Named("h") = outh1,
+    Rcpp::Named("target") = tar1.t()
+  );
+
+  // return Rcpp::List::create(
+  //   Rcpp::Named("chain2") = Rcpp::List::create(
+  //     Rcpp::Named("gamma") = outgam2.t(),
+  //     Rcpp::Named("beta") = outbeta2.t(),
+  //     Rcpp::Named("Sigma") = outSigma2,
+  //     Rcpp::Named("sigmabeta") = outsb2,
+  //     Rcpp::Named("h") = outh2,
+  //     Rcpp::Named("target") = tar2.t()
+  //   )
+  // );
+  // return Rcpp::List::create(
+  //   Rcpp::Named("chain1") = Rcpp::List::create(
+  //     Rcpp::Named("gamma") = outgam1.t(),
+  //     Rcpp::Named("beta") = outbeta1.t(),
+  //     Rcpp::Named("Sigma") = outSigma1,
+  //     Rcpp::Named("sigmabeta") = outsb1,
+  //     Rcpp::Named("h") = outh1,
+  //     Rcpp::Named("target") = tar1.t()
+  //   ),
+  //   Rcpp::Named("chain2") = Rcpp::List::create(
+  //     Rcpp::Named("gamma") = outgam2.t(),
+  //     Rcpp::Named("beta") = outbeta2.t(),
+  //     Rcpp::Named("Sigma") = outSigma2,
+  //     Rcpp::Named("sigmabeta") = outsb2,
+  //     Rcpp::Named("h") = outh2,
+  //     Rcpp::Named("target") = tar2.t()
+  //   )
+  // );
 }
 
 
@@ -636,7 +933,8 @@ Rcpp::List doMCMC_c(arma::vec X,
                     int niter,
                     int bgiter,
                     int hiter,
-                    int switer){
+                    int switer,
+                    double smallchange){
   //empty arrays to save values
   arma::mat outbeta = arma::zeros<arma::mat>(T, niter);
   arma::mat outgam = arma::zeros<arma::mat>(T,niter);
@@ -659,7 +957,8 @@ Rcpp::List doMCMC_c(arma::vec X,
     double sigmabeta1 = outsb(i-1);
     double h1         = outh(i-1);
     Rcpp::List bg = update_betagam_sw_c(X,Y,gam1,beta1,Sigma1,
-                                        abs(marcor),sigmabeta1,Vbeta,bgiter,switer);
+                                        abs(marcor),sigmabeta1,Vbeta,
+                                        bgiter,switer,smallchange);
     arma::vec gam2  = as<arma::vec>(bg["gam"]);
     arma::vec beta2 = as<arma::vec>(bg["beta"]);
     arma::mat Sigma2 = update_Sigma_c(n,nu,X,beta2,Phi,Y);
@@ -686,199 +985,110 @@ Rcpp::List doMCMC_c(arma::vec X,
 }
 
 
-// [[Rcpp::depends("RcppArmadillo")]]
-// [[Rcpp::export]]
-Rcpp::List run2chains_c(const arma::vec X,
-                        const arma::mat Y,
-                        const Rcpp::List initial_chain1,
-                        const Rcpp::List initial_chain2,
-                        const arma::mat Phi,
-                        const arma::rowvec marcor,
-                        const int niter = 1000,
-                        const int bgiter = 500,
-                        const int hiter = 50,
-                        const int switer = 50,
-                        const int burnin = 5,
-                        double Vbetaratio=0.01){
-  //initialize if not user-defined
-  int T = Y.n_cols;
-  int n = Y.n_rows;
-  int nu = T+5;
-
-  //marginal correlation
-  // arma::rowvec marcor = arma::zeros<arma::rowvec>(T);
-  // for (int t=0; t<T; ++t){
-  //   arma::vec ycol = Y.col(t);
-  //   arma::uvec non_null = find_finite(ycol);
-  //   marcor(t) = sum(ycol(non_null)%X(non_null))/non_null.size();
-  // }
-  // //initialize Vbeta
-  // double Vbeta = sum(marcor%marcor) * 0.01;
-  double Vbeta = mean(marcor%marcor) * Vbetaratio;
-
-  arma::mat outbeta1 = arma::zeros<arma::mat>(T, niter);
-  arma::mat outgam1 = arma::zeros<arma::mat>(T,niter);
-  arma::cube outSigma1 = arma::zeros<arma::cube>(T,T,niter);
-  arma::vec outsb1 = arma::zeros<arma::vec>(niter);
-  arma::vec outh1 = arma::zeros<arma::vec>(niter);
-  arma::mat tar1 = arma::zeros<arma::mat>(3, niter);
-
-  arma::mat outbeta2 = arma::zeros<arma::mat>(T, niter);
-  arma::mat outgam2 = arma::zeros<arma::mat>(T,niter);
-  arma::cube outSigma2 = arma::zeros<arma::cube>(T,T,niter);
-  arma::vec outsb2 = arma::zeros<arma::vec>(niter);
-  arma::vec outh2 = arma::zeros<arma::vec>(niter);
-  arma::mat tar2 = arma::zeros<arma::mat>(3, niter);
 
 
-  outbeta1.col(0)    = as<arma::vec>(initial_chain1["beta"]);
-  outgam1.col(0)     = as<arma::vec>(initial_chain1["gamma"]);
-  outSigma1.slice(0) = as<arma::mat>(initial_chain1["Sigma"]);
-  outsb1(0)          = initial_chain1["sigmabeta"];
-
-  outbeta2.col(0)    = as<arma::vec>(initial_chain2["beta"]);
-  outgam2.col(0)     = as<arma::vec>(initial_chain2["gamma"]);
-  outSigma2.slice(0) = as<arma::mat>(initial_chain2["Sigma"]);
-  outsb2(0)          = initial_chain2["sigmabeta"];
-
-  for (int i=1; i<niter; ++i){
-    //chain 1 update
-    if(i%20==0){
-      Vbeta = max(Vbeta * 0.8, 1e-8);
-      cout << "Vbeta is " << Vbeta << "\n";
-    }
-    Rcpp::List bg = update_betagam_sw_c(X,
-                                        Y,
-                                        outgam1.col(i-1),
-                                        outbeta1.col(i-1),
-                                        outSigma1.slice(i-1),
-                                        abs(marcor),
-                                        outsb1(i-1),
-                                        Vbeta,
-                                        bgiter,
-                                        switer);
-    outgam1.col(i)  = as<arma::vec>(bg["gam"]);
-    cout << outgam1.col(i).t() << "\n";
-    outbeta1.col(i) = as<arma::vec>(bg["beta"]);
-    outSigma1.slice(i) = update_Sigma_c(n,nu,X,outbeta1.col(i),Phi,Y);
-    Rcpp::List hsig = update_h_c(outh1[i-1],
-                                 hiter,
-                                 outgam1.col(i),
-                                 outbeta1.col(i),
-                                 outSigma1.slice(i),
-                                 X,
-                                 T);
-    outh1(i) = hsig["h"];
-    outsb1(i) = hsig["sigbeta"];
-    if(!arma::is_finite(outsb1(i))){
-      outsb1(i) = 1000;
-    }
-    tar1.col(i) = get_target_c(X,
-             Y,
-             outsb1(i),
-             outSigma1.slice(i),
-             outgam1.col(i),
-             outbeta1.col(i));
-
-    //chain 2 update
-    bg = update_betagam_sw_c(X,
-                             Y,
-                             outgam2.col(i-1),
-                             outbeta2.col(i-1),
-                             outSigma2.slice(i-1),
-                             abs(marcor),
-                             outsb2(i-1),
-                             Vbeta,
-                             bgiter,
-                             switer);
-    outgam2.col(i)  = as<arma::vec>(bg["gam"]);
-    cout << outgam2.col(i).t() << "\n";
-    outbeta2.col(i) = as<arma::vec>(bg["beta"]);
-    outSigma2.slice(i) = update_Sigma_c(n,nu,X,outbeta1.col(i),Phi,Y);
-    hsig = update_h_c(outh2[i-1],
-                      hiter,
-                      outgam2.col(i),
-                      outbeta2.col(i),
-                      outSigma2.slice(i),
-                      X,
-                      T);
-    outh2(i) = hsig["h"];
-    outsb2(i) = hsig["sigbeta"];
-    if(!arma::is_finite(outsb2(i))){
-      outsb2(i) = 1000;
-    }
-    tar2.col(i) = get_target_c(X,
-             Y,
-             outsb2(i),
-             outSigma2.slice(i),
-             outgam2.col(i),
-             outbeta2.col(i));
-    //convergence criterion
-    if(i>2*burnin && i%5==0){
-      arma::vec rowmean1 = mean(outgam1.cols(burnin,i), 1);
-      arma::vec rowmean2 = mean(outgam2.cols(burnin,i), 1);
-      if(all(rowmean1<0.5) & all(rowmean2<0.5)){
-        cout<< "both chains selected no variables - converged!";
-        outSigma1.shed_slices(i+1, niter-1);  outSigma2.shed_slices(i+1,niter-1);
-        outgam1.shed_cols(i+1,niter-1);       outgam2.shed_cols(i+1,niter-1);
-        outbeta1.shed_cols(i+1, niter-1);     outbeta2.shed_cols(i+1, niter-1);
-        outh1.shed_rows(i+1,niter-1);         outh2.shed_rows(i+1, niter-1);
-        outsb1.shed_rows(i+1,niter-1);        outsb2.shed_rows(i+1,niter-1);
-        break;
-      }else{
-        arma::uvec est1 = find(rowmean1 > 0.5);
-        arma::uvec est2 = find(rowmean2 > 0.5);
-        if(est1.size()==est2.size() && all(est1==est2)){
-          arma::mat tmpbeta1 = outbeta1.cols(burnin,i);
-          arma::mat tmpbeta2 = outbeta2.cols(burnin,i);
-          arma::mat tmpgam1 = outgam1.cols(burnin,i);
-          arma::mat tmpgam2 = outgam2.cols(burnin,i);
-          double diff = 0;
-          for (int k = 0; k < est1.size(); ++k){
-            int kk = est1(k);
-            arma::uvec ones = find(tmpgam1.row(kk)==1);
-            arma::rowvec tmptmpbeta1 = tmpbeta1.row(kk);
-            double beta1 = mean(tmptmpbeta1(ones));
-            arma::uvec ones2 = find(tmpgam2.row(kk)==1);
-            arma::rowvec tmptmpbeta2 = tmpbeta2.row(kk);
-            double beta2 = mean(tmptmpbeta2(ones));
-            diff = diff + (beta1-beta2)*(beta1-beta2);
-          }
-          if(diff/est1.size() < 1e-2){
-            cout<< "beta difference is small between the two chains - converged!\n";
-            outSigma1.shed_slices(i+1, niter-1);  outSigma2.shed_slices(i+1,niter-1);
-            outgam1.shed_cols(i+1,niter-1);       outgam2.shed_cols(i+1,niter-1);
-            outbeta1.shed_cols(i+1, niter-1);     outbeta2.shed_cols(i+1, niter-1);
-            outh1.shed_rows(i+1,niter-1);         outh2.shed_rows(i+1, niter-1);
-            outsb1.shed_rows(i+1,niter-1);        outsb2.shed_rows(i+1,niter-1);
-            tar1.shed_cols(i+1, niter-1);         tar2.shed_cols(i+1, niter-1);
-            break;
-          }
-        }
-      }
-    }
-    cout << i << "\n";
-  }
-  return Rcpp::List::create(
-    Rcpp::Named("chain1") = Rcpp::List::create(
-      Rcpp::Named("gamma") = outgam1.t(),
-      Rcpp::Named("beta") = outbeta1.t(),
-      Rcpp::Named("Sigma") = outSigma1,
-      Rcpp::Named("sigmabeta") = outsb1,
-      Rcpp::Named("h") = outh1,
-      Rcpp::Named("target") = tar1.t()
-    ),
-    Rcpp::Named("chain2") = Rcpp::List::create(
-      Rcpp::Named("gamma") = outgam2.t(),
-      Rcpp::Named("beta") = outbeta2.t(),
-      Rcpp::Named("Sigma") = outSigma2,
-      Rcpp::Named("sigmabeta") = outsb2,
-      Rcpp::Named("h") = outh2,
-      Rcpp::Named("target") = tar2.t()
-    )
-  );
-}
-
+// Rcpp::List update_betagam_sw_c(const arma::vec X,
+//                                const arma::mat Y,
+//                                const arma::vec gam1,
+//                                const arma::vec beta1,
+//                                const arma::mat Sigma,
+//                                const arma::rowvec marcor,
+//                                const double sigmabeta,
+//                                const double Vbeta,
+//                                const int bgiter,
+//                                const int smallworlditer){
+//   int T = gam1.size();
+//   arma::mat outgamma = arma::zeros<arma::mat>(T,bgiter);
+//   arma::mat outbeta = arma::zeros<arma::mat>(T,bgiter);
+//   outgamma.col(0) = gam1;
+//   outbeta.col(0) = beta1;
+//   arma::vec tar = arma::zeros<arma::vec>(bgiter);
+//   for (int i=1; i<bgiter; ++i){
+//     Rcpp::List temp = update_gamma_sw_c(X,Y,outgamma.col(i-1), marcor);
+//     arma::vec gam1 = outgamma.col(i-1);
+//     arma::vec beta1 = outbeta.col(i-1);
+//     //small world proposal
+//     if(i%30==0){
+//       double proposal_ratio = 0;
+//       arma::vec betatemp1 = beta1;
+//       arma::vec gamtemp1 = gam1;
+//       arma::vec betatemp2 = betatemp1;
+//       arma::vec gamtemp2 = gamtemp1;
+//       for (int j=0; j < smallworlditer; ++j){
+//         Rcpp::List temp = update_gamma_sw_c(X,Y,gamtemp1, marcor);
+//         arma::vec gamtemp2 = as<arma::vec>(temp["gam"]);
+//         arma::vec betatemp2 = betatemp1 % gamtemp2;
+//         arma::uvec ind = find(gamtemp2==1);
+//         betatemp2(ind) = betatemp1(ind) + as<arma::vec>(rnorm(ind.size(), 0, sqrt(Vbeta)));
+//         int changeind = temp["changeind"];
+//         int change = gamtemp2(changeind);
+//         double proposaliter = R::dnorm(betatemp1(changeind)-betatemp2(changeind),
+//                                        0,sqrt(Vbeta), true);
+//         arma::rowvec marcor2 = min(marcor)+max(marcor)-marcor;
+//         if(change==1){
+//           arma::uvec ind1 = find(gamtemp1==0);
+//           arma::uvec ind2 = find(gamtemp2==1);
+//           double tempadd = marcor(changeind)/sum(marcor(ind1));
+//           double tempremove = marcor2(changeind)/sum(marcor2(ind2));
+//           proposaliter = -log(tempadd)-log(tempremove)-proposaliter;
+//         }else{
+//           arma::uvec ind1 = find(gamtemp1==1);
+//           arma::uvec ind2 = find(gamtemp2==0);
+//           double tempadd = marcor(changeind)/sum(marcor(ind2));
+//           double tempremove = marcor2(changeind) / sum(marcor2(ind1));
+//           proposaliter = log(tempadd)+log(tempremove)+proposaliter;
+//         }
+//         proposal_ratio = proposal_ratio + proposaliter;
+//         gamtemp1 = gamtemp2; betatemp1 = betatemp2;
+//       }
+//       arma::vec gam2 = gamtemp2;
+//       arma::vec beta2 = betatemp2;
+//       double newtarget = sum(get_target_c(X,Y,sigmabeta,Sigma,gam2,beta2));
+//       double oldtarget = sum(get_target_c(X,Y,sigmabeta,Sigma,gam1,beta1));
+//       double A = newtarget-oldtarget + proposal_ratio;
+//       arma::vec check2 = runif(1,0,1); double check = check2(0);
+//       if(exp(A) > check){
+//         tar(i) = newtarget;
+//         outgamma.col(i)= gam2;
+//         outbeta.col(i) = beta2;
+//       }else{
+//         tar(i) = oldtarget;
+//         outgamma.col(i) = gam1;
+//         outbeta.col(i) = beta1;
+//       }
+//     }else{
+//       Rcpp::List temp = update_gamma_sw_c(X,Y,gam1, marcor);
+//       arma::vec gam2 = as<arma::vec>(temp["gam"]);
+//       arma::vec beta2 = beta1 % gam2;
+//       arma::uvec ind = find(gam2==1);
+//       beta2(ind) = beta1(ind) + as<arma::vec>(rnorm(ind.size(), 0, sqrt(Vbeta)));
+//       int changeind = temp["changeind"];
+//       int change = gam2(changeind);
+//       arma::vec A = betagam_accept_c(X,Y,sigmabeta,
+//                                      Sigma,Vbeta,
+//                                      gam1,beta1,
+//                                      gam2,beta2,
+//                                      changeind,change);
+//       NumericVector check2 = runif(1);
+//       double check = check2(0);
+//       if(exp(A(0))>check){
+//         tar(i) = A(1);
+//         outgamma.col(i) = gam2; outbeta.col(i) = beta2;
+//       }else{
+//         tar(i) = A(2);
+//         outgamma.col(i) = gam1; outbeta.col(i) = beta1;
+//       }
+//     }
+//   }
+//
+//   arma::vec outgamma2 = outgamma.col(bgiter-1);
+//   arma::vec outbeta2 = outbeta.col(bgiter-1);
+//   return Rcpp::List::create(
+//     Rcpp::Named("gam")= outgamma2,
+//     Rcpp::Named("beta") = outbeta2,
+//     Rcpp::Named("tar") = tar
+//   );
+// }
 
 
 

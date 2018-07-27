@@ -197,7 +197,7 @@ double get_h_from_sigmabeta_c(const arma::vec X,
 // [[Rcpp::export]]
 arma::vec get_target_c(const arma::vec X,
                        const arma::mat Y,
-                       const double sigmabeta,
+                       double sigmabeta,
                        const arma::mat Sigma,
                        const arma::vec gam,
                        const arma::vec beta,
@@ -208,6 +208,7 @@ arma::vec get_target_c(const arma::vec X,
   double L = 0;
   double B = 0;
   double G = 0;
+
   for (int i=0; i < n; ++i){
     arma::uvec naind = find_finite(Y.row(i).t());
     if(naind.size()>0){
@@ -327,7 +328,7 @@ Rcpp::List update_h_c(const double initialh,
   if(all(beta==0)){
     return Rcpp::List::create(
       Rcpp::Named("h") = 0,
-      Rcpp::Named("sigbeta") = 0
+      Rcpp::Named("sigbeta") = 1e-5
     );
   }
   for (int i=1; i<hiter; ++i){
@@ -349,7 +350,7 @@ Rcpp::List update_h_c(const double initialh,
     double acceptanceprob = exp(lik2-lik1);
     arma::vec ee = runif(1);
     double e = ee(0);
-    if(e<acceptanceprob){
+    if(acceptanceprob>e){
       h1 = h2; sigbeta1 = sigmabeta2;
     }
   }
@@ -435,7 +436,6 @@ arma::vec betagam_accept_c(const arma::vec X,
   out(3) = proposal_ratio;
   return(out);
 }
-//
 
 // [[Rcpp::depends("RcppArmadillo")]]
 // [[Rcpp::export]]
@@ -648,6 +648,7 @@ Rcpp::List update_betagam_sw_c(const arma::vec X,
       NumericVector check = runif(1);
       double check1 = check(0);
       if(exp(A)>check1){
+        cout << "small world proposal effective!\n";
         gam1 = gam2; beta1 = beta2;
       }
     }else{
@@ -753,53 +754,57 @@ Rcpp::List doMCMC_c(const arma::vec X,
 // [[Rcpp::depends("RcppArmadillo")]]
 // [[Rcpp::export]]
 Rcpp::List run2chains_c(const arma::vec X,
-             const arma::mat Y,
-             const Rcpp::List initial_chain1,
-             const Rcpp::List initial_chain2,
-             const arma::mat Phi,
-             const arma::rowvec marcor,
-             const int niter = 1000,
-             const int bgiter = 500,
-             const int hiter = 50,
-             const int switer = 50,
-             const double adjust = 1){
-             //const int burnin = 5,
-             //const double adjust = 1){
+                        const arma::mat Y,
+                        const Rcpp::List initial_chain1,
+                        const Rcpp::List initial_chain2,
+                        const arma::mat Phi,
+                        const arma::rowvec marcor,
+                        const int niter = 1000,
+                        const int bgiter = 500,
+                        const int hiter = 50,
+                        const int switer = 50,
+                        const double adjust = 1,
+                        double Vbetaratio = 0.1,
+                        double Vbetamin = 1e-6){
+  //const int burnin = 5,
+  //const double adjust = 1){
   //initialize if not user-defined
+
   int T = Y.n_cols;
   int n = Y.n_rows;
-  int nu = T+5;
-
+  int nu = T+4;
+  
   //initialize Vbeta
-  double Vbeta = mean(marcor%marcor) * 0.0005;
-
+  double Vbeta = mean(marcor%marcor) * Vbetaratio;
+  
   arma::mat outbeta1 = arma::zeros<arma::mat>(T, niter);
   arma::mat outgam1 = arma::zeros<arma::mat>(T,niter);
   arma::cube outSigma1 = arma::zeros<arma::cube>(T,T,niter);
   arma::vec outsb1 = arma::zeros<arma::vec>(niter);
   arma::vec outh1 = arma::zeros<arma::vec>(niter);
   arma::mat tar1 = arma::zeros<arma::mat>(3, niter);
-
+  
   arma::mat outbeta2 = arma::zeros<arma::mat>(T, niter);
   arma::mat outgam2 = arma::zeros<arma::mat>(T,niter);
   arma::cube outSigma2 = arma::zeros<arma::cube>(T,T,niter);
   arma::vec outsb2 = arma::zeros<arma::vec>(niter);
   arma::vec outh2 = arma::zeros<arma::vec>(niter);
   arma::mat tar2 = arma::zeros<arma::mat>(3, niter);
-
+  
   outbeta1.col(0)    = as<arma::vec>(initial_chain1["beta"]);
   outgam1.col(0)     = as<arma::vec>(initial_chain1["gamma"]);
   outSigma1.slice(0) = as<arma::mat>(initial_chain1["Sigma"]);
   outsb1(0)          = initial_chain1["sigmabeta"];
-
+  
   outbeta2.col(0)    = as<arma::vec>(initial_chain2["beta"]);
   outgam2.col(0)     = as<arma::vec>(initial_chain2["gamma"]);
   outSigma2.slice(0) = as<arma::mat>(initial_chain2["Sigma"]);
   outsb2(0)          = initial_chain2["sigmabeta"];
-
+  
   for (int i=1; i<niter; ++i){
+    Vbeta = mean(marcor%marcor) * Vbetaratio;
     //chain 1 update
-    Rcpp::List bg = update_betagam_sw_c(X,
+    Rcpp::List bg1 = update_betagam_sw_c(X,
                                         Y,
                                         outgam1.col(i-1),
                                         outbeta1.col(i-1),
@@ -810,66 +815,66 @@ Rcpp::List run2chains_c(const arma::vec X,
                                         bgiter,
                                         T,
                                         adjust);
-
-    // Rcpp::List bg = update_betagam_c(X,Y,outgam1.col(i-1), outbeta1.col(i-1),
+    
+    // Rcpp::List bg1 = update_betagam_c(X,Y,outgam1.col(i-1), outbeta1.col(i-1),
     //                       outSigma1.slice(i-1), marcor,
-    //                       outsb1[i-1], Vbeta, bgiter);
-
-    outgam1.col(i)  = as<arma::vec>(bg["gam"]);
+    //                       outsb1[i-1], Vbeta, bgiter, adjust);
+    
+    outgam1.col(i)  = as<arma::vec>(bg1["gam"]);
     cout << outgam1.col(i).t() << "\n";
-    outbeta1.col(i) = as<arma::vec>(bg["beta"]);
+    outbeta1.col(i) = as<arma::vec>(bg1["beta"]);
     outSigma1.slice(i) = update_Sigma_c(n,nu,X,outbeta1.col(i),Phi,Y);
-    Rcpp::List hsig = update_h_c(outh1[i-1],
+    Rcpp::List hsig1 = update_h_c(outh1[i-1],
                                  hiter,
                                  outgam1.col(i),
                                  outbeta1.col(i),
                                  outSigma1.slice(i),
                                  X,
                                  T);
-    outh1(i) = hsig["h"];
-    outsb1(i) = hsig["sigbeta"];
+    outh1(i) = hsig1["h"];
+    outsb1(i) = hsig1["sigbeta"];
     if(!arma::is_finite(outsb1(i))){
       outsb1(i) = 1000;
     }
+    
     tar1.col(i) = get_target_c(X,
-                              Y,
-                              outsb1(i),
-                              outSigma1.slice(i),
-                              outgam1.col(i),
-                              outbeta1.col(i),
-                              adjust);
-
+             Y,
+             outsb1(i),
+             outSigma1.slice(i),
+             outgam1.col(i),
+             outbeta1.col(i),
+             adjust);
+    
     //chain 2 update
-    bg = update_betagam_sw_c(X,
+    Rcpp::List bg2 = update_betagam_sw_c(X,
                              Y,
                              outgam2.col(i-1),
                              outbeta2.col(i-1),
                              outSigma2.slice(i-1),
                              abs(marcor),
-                             outsb1[i-1],
+                             outsb2(i-1),
                              Vbeta,
                              bgiter,
                              T,
                              adjust);
 
-    // bg = update_betagam_c(X,Y,outgam2.col(i-1), outbeta2.col(i-1),
+    // Rcpp::List bg2 = update_betagam_c(X,Y,outgam2.col(i-1), outbeta2.col(i-1),
     //                       outSigma2.slice(i-1), marcor,
-    //                       outsb2[i-1], Vbeta, bgiter);
-
-
-    outgam2.col(i)  = as<arma::vec>(bg["gam"]);
+    //                       outsb2[i-1], Vbeta, bgiter, adjust);
+    
+    outgam2.col(i)  = as<arma::vec>(bg2["gam"]);
     cout << outgam2.col(i).t() << "\n";
-    outbeta2.col(i) = as<arma::vec>(bg["beta"]);
-    outSigma2.slice(i) = update_Sigma_c(n,nu,X,outbeta1.col(i),Phi,Y);
-    hsig = update_h_c(outh1[i-1],
-                                 hiter,
-                                 outgam2.col(i),
-                                 outbeta2.col(i),
-                                 outSigma2.slice(i),
-                                 X,
-                                 T);
-    outh2(i) = hsig["h"];
-    outsb2(i) = hsig["sigbeta"];
+    outbeta2.col(i) = as<arma::vec>(bg2["beta"]);
+    outSigma2.slice(i) = update_Sigma_c(n,nu,X,outbeta2.col(i),Phi,Y);
+    Rcpp::List hsig2 = update_h_c(outh2[i-1],
+                      hiter,
+                      outgam2.col(i),
+                      outbeta2.col(i),
+                      outSigma2.slice(i),
+                      X,
+                      T);
+    outh2(i) = hsig2["h"];
+    outsb2(i) = hsig2["sigbeta"];
     if(!arma::is_finite(outsb2(i))){
       outsb2(i) = 1000;
     }
@@ -880,25 +885,32 @@ Rcpp::List run2chains_c(const arma::vec X,
              outgam2.col(i),
              outbeta2.col(i),
              adjust);
-
+    
     //convergence criterion
     //if(i>2*burnin && i%5==0){
-    if(i > 10 & i % 10 == 0){
+    if (i%10 == 0){
+      Vbetaratio = max(Vbetaratio * 0.9, Vbetamin);
+      cout << "Vbetaratio is now " << Vbetaratio << "\n";
+    }
+    
+    if(i > 2000 & i % 10 == 0){
       //int burnin = ceil(i/2);
       int burnin = ceil(i/2);
       arma::vec rowmean1 = mean(outgam1.cols(burnin,i), 1);
       arma::vec rowmean2 = mean(outgam2.cols(burnin,i), 1);
       if(all(rowmean1<0.5) & all(rowmean2<0.5)){
         cout<< "both chains selected no variables - converged!";
-        outSigma1.shed_slices(i+1, niter-1);  outSigma2.shed_slices(i+1,niter-1);
-        outgam1.shed_cols(i+1,niter-1);       outgam2.shed_cols(i+1,niter-1);
-        outbeta1.shed_cols(i+1, niter-1);     outbeta2.shed_cols(i+1, niter-1);
-        outh1.shed_rows(i+1,niter-1);         outh2.shed_rows(i+1, niter-1);
-        outsb1.shed_rows(i+1,niter-1);        outsb2.shed_rows(i+1,niter-1);
+        outSigma1.shed_slices(i, niter-1);  outSigma2.shed_slices(i,niter-1);
+        outgam1.shed_cols(i,niter-1);       outgam2.shed_cols(i,niter-1);
+        outbeta1.shed_cols(i, niter-1);     outbeta2.shed_cols(i, niter-1);
+        outh1.shed_rows(i,niter-1);         outh2.shed_rows(i, niter-1);
+        outsb1.shed_rows(i,niter-1);        outsb2.shed_rows(i,niter-1);
         break;
+      }
+      /*
       }else{
-        arma::uvec est1 = find(rowmean1 > 0.5);
-        arma::uvec est2 = find(rowmean2 > 0.5);
+        arma::uvec est1 = find(rowmean1 > 0.9);
+        arma::uvec est2 = find(rowmean2 > 0.9);
         if(est1.size()==est2.size() && all(est1==est2)){
           arma::mat tmpbeta1 = outbeta1.cols(burnin,i);
           arma::mat tmpbeta2 = outbeta2.cols(burnin,i);
@@ -917,16 +929,17 @@ Rcpp::List run2chains_c(const arma::vec X,
           }
           if(diff/est1.size() < 1e-2){
             cout<< "beta difference is small between the two chains - converged!\n";
-            outSigma1.shed_slices(i+1, niter-1);  outSigma2.shed_slices(i+1,niter-1);
-            outgam1.shed_cols(i+1,niter-1);       outgam2.shed_cols(i+1,niter-1);
-            outbeta1.shed_cols(i+1, niter-1);     outbeta2.shed_cols(i+1, niter-1);
-            outh1.shed_rows(i+1,niter-1);         outh2.shed_rows(i+1, niter-1);
-            outsb1.shed_rows(i+1,niter-1);        outsb2.shed_rows(i+1,niter-1);
+            outSigma1.shed_slices(i, niter-1);  outSigma2.shed_slices(i,niter-1);
+            outgam1.shed_cols(i,niter-1);       outgam2.shed_cols(i,niter-1);
+            outbeta1.shed_cols(i, niter-1);     outbeta2.shed_cols(i, niter-1);
+            outh1.shed_rows(i,niter-1);         outh2.shed_rows(i, niter-1);
+            outsb1.shed_rows(i,niter-1);        outsb2.shed_rows(i,niter-1);
             break;
           }
         }
-      }
+      }*/
     }
+
     cout << i << "\n";
   }
   return Rcpp::List::create(
@@ -948,4 +961,3 @@ Rcpp::List run2chains_c(const arma::vec X,
     )
   );
 }
-
